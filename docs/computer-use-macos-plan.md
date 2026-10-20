@@ -3,7 +3,7 @@
 Date: 2026-10-20 (Asia/Shanghai)  
 Status: **planned / M0 architecture review pending**. macOS runtime, accessibility permissions and native UI have **not** been implemented or tested.  
 Priority: **P1, next cross-platform Computer Use feature after the Windows branch is stabilized**.  
-Issue: **pending** — GitHub returned HTTP 410 (`Issues has been disabled in this repository`) when trying to create the corresponding task. Enable repository Issues first, then create/link the issue before beginning implementation.  
+Issue: **[#1 — macOS 14+ 原生窗口控制与跨平台适配](https://github.com/watermoon/ChatToHarness/issues/1)** (open; M0–M4 tracked in GitHub).
 Dependency: Windows Computer Use baseline `feat/computer-use` (head at planning time: `772d7bf`).
 
 ## Scope and principles
@@ -117,10 +117,10 @@ The outline is a local visual safety indicator, not a claim that OS-injected eve
 | Build/package smoke and real installed app | Windows local preview | not started |
 | Multi-display/Retina calibration | Windows DPI tests | **mandatory** Mac proof |
 
-## Immediate backlog and issue blocker
+## Immediate backlog and issue tracking
 
 - [x] 2026-10-20: read current Windows implementation, platform build routing and current product macOS arm64 target.
 - [x] 2026-10-20: create the plan and explicit phase/gate matrix.
-- [ ] Enable Issues on `watermoon/ChatToHarness` (repository setting; **not changed by this task**).
-- [ ] Create issue titled `feat(computer-use): macOS 14+ 原生窗口控制与跨平台适配`; sync this milestone checklist and link the issue here and in `docs/dev.md`.
+- [x] 2026-10-20: Repository Issues enabled by the repository owner.
+- [x] 2026-10-20: Created [Issue #1](https://github.com/watermoon/ChatToHarness/issues/1) with M0–M4 milestone checklist, architecture references and acceptance gates. Keep progress/checkmarks synchronized with this document and `docs/dev.md`.
 - [ ] Review and approve M0 ADR on a Mac; begin M1 only after M0 passes.
