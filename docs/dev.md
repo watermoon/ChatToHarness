@@ -1,4 +1,12 @@
-# Development record — Windows computer use
+# Development record — Computer Use (Windows / macOS)
+
+## macOS Computer Use entered roadmap — 2026-10-20
+
+- **Status: planned, implementation not started.** Priority P1: next cross-platform Computer Use feature after stabilizing the Windows implementation; target macOS 14+ Apple Silicon arm64.
+- **Branch:** `plan/macos-computer-use` based on Windows `feat/computer-use` head `772d7bf`; no worktree used. **Plan:** [docs/computer-use-macos-plan.md](computer-use-macos-plan.md) (architecture diagram, shared MCP contract, platform-native ScreenCaptureKit / Accessibility / Quartz approach, TCC permission gates, Retina/multi-display checks, STOP/Esc and real pointer glow, M0–M4 acceptance milestones, Windows nonregression).
+- **Next:** M0 architecture/permission/stop-shortcut feasibility review on an actual Mac. M1 scoped screenshot and M2 guarded input only after M0 approval; later M3 Mac packaging and M4 complete native acceptance.
+- **GitHub Issue blocker:** attempted to create `feat(computer-use): macOS 14+ 原生窗口控制与跨平台适配` in `watermoon/ChatToHarness`, but GitHub API returned HTTP 410 **Issues has been disabled in this repository**. No Issue was created; repo settings were not changed. Once Issues is enabled, create/link the issue and sync checklist before implementation.
+- **Evidence:** inspected `native/ComputerUse.cs`, `app/windows-computer-use.cjs`, `scripts/prepare-computer-use.cjs`, `scripts/build-computer-use.cjs`, `electron-builder.config.cjs`, macOS platform support and existing Windows ADR. No macOS code, permissions or Mac runtime tests are claimed. This record represents scheduling/documentation only.
 
 ## Fix cursor-shaped Glow alignment — 2026-10-20
 
