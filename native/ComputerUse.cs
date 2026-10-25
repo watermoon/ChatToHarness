@@ -511,9 +511,14 @@ class ComputerUse {
         readonly Label targetLabel;
         readonly Label currentLabel;
         readonly Label previousLabel;
+        readonly Button stopButton;
+        int layoutDpi;
         double orbit;
         public StopWindow() {
             Text = "ChatToHarness — Computer Use";
+            // Own the layout in device pixels. WinForms' implicit scaling can
+            // resize controls without resizing their custom rounded regions.
+            AutoScaleMode = AutoScaleMode.None;
             Width = 530; Height = 188; TopMost = true;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
@@ -550,13 +555,14 @@ class ComputerUse {
                 Font=new Font("Segoe UI",9),
                 Location=new Point(18,150),Size=new Size(361,20),
                 AutoEllipsis=true, Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right};
-            var stopButton = new Button {Text="STOP  ·  Esc", Location=new Point(390,90),
+            stopButton = new Button {Text="STOP  ·  Esc", Location=new Point(390,90),
                 Size=new Size(110,46), FlatStyle=FlatStyle.Flat,
                 Font=new Font("Segoe UI",10,FontStyle.Bold),
                 ForeColor=Color.White, BackColor=Color.FromArgb(232,48,64),
                 Anchor=AnchorStyles.Right|AnchorStyles.Top, TabStop=false};
             stopButton.FlatAppearance.BorderSize=0;
             stopButton.FlatAppearance.MouseOverBackColor=Color.FromArgb(247,71,87);
+            stopButton.SizeChanged += delegate { UpdateRegions(); };
             using (var stopShape=RoundedFrame(new Rectangle(0,0,stopButton.Width,stopButton.Height),11))
                 stopButton.Region=new Region(stopShape);
             stopButton.Click += delegate { Close(); };
@@ -565,6 +571,57 @@ class ComputerUse {
             using (var shape=RoundedFrame(new Rectangle(0,0,Width,Height),14))
                 Region=new Region(shape);
             FollowTargetDisplay();
+        }
+        void UpdateRegions() {
+            if (stopButton == null || ClientSize.Width < 28 || ClientSize.Height < 28) return;
+            float scale = Math.Max(1,layoutDpi)/96f;
+            int radius = Math.Max(1,(int)Math.Round(14*scale));
+            var old = Region;
+            using (var shape=RoundedFrame(new Rectangle(Point.Empty,ClientSize),radius)) Region=new Region(shape);
+            if (old!=null) old.Dispose();
+            old=stopButton.Region;
+            using (var shape=RoundedFrame(new Rectangle(Point.Empty,stopButton.Size),Math.Max(1,(int)Math.Round(11*scale))))
+                stopButton.Region=new Region(shape);
+            if (old!=null) old.Dispose();
+        }
+        // Also used by the layout-only fixture; no target activation or input.
+        void LayoutForDisplay(int dpi, Rectangle work) {
+            dpi=Math.Max(96,dpi);
+            float scale=dpi/96f;
+            int margin=(int)Math.Round(10*scale);
+            int width=Math.Min((int)Math.Round(530*scale),Math.Max(1,work.Width-2*margin));
+            int height=(int)Math.Round(188*scale);
+            if (layoutDpi==dpi && ClientSize==new Size(width,height)) return;
+            SuspendLayout();
+            bool changeFonts=layoutDpi!=dpi;
+            layoutDpi=dpi;
+            ClientSize=new Size(width,height);
+            int left=(int)Math.Round(18*scale), right=(int)Math.Round(30*scale);
+            int buttonWidth=(int)Math.Round(110*scale), buttonLeft=width-right-buttonWidth;
+            int textWidth=Math.Max(1,buttonLeft-left-(int)Math.Round(11*scale));
+            int[] tops={13,37,60,85,116,150}, heights={21,19,19,19,22,20};
+            for(int i=0;i<6;i++) {
+                Control label=Controls[i];
+                label.SetBounds(left,(int)Math.Round(tops[i]*scale),textWidth,(int)Math.Round(heights[i]*scale));
+                if(changeFonts) {
+                    Font old=label.Font;
+                    label.Font=new Font("Segoe UI",(i==0||i==4?10f:9f)*96f/72f*scale,
+                        i==0||i==4?FontStyle.Bold:FontStyle.Regular,GraphicsUnit.Pixel);
+                    old.Dispose();
+                }
+            }
+            stopButton.SetBounds(buttonLeft,(int)Math.Round(90*scale),buttonWidth,(int)Math.Round(46*scale));
+            if(changeFonts) {
+                Font old=stopButton.Font;
+                stopButton.Font=new Font("Segoe UI",10f*96f/72f*scale,FontStyle.Bold,GraphicsUnit.Pixel);
+                old.Dispose();
+            }
+            ResumeLayout(false);
+            UpdateRegions();
+        }
+        protected override void OnSizeChanged(EventArgs e) {
+            base.OnSizeChanged(e);
+            UpdateRegions();
         }
         static string TargetCaption() {
             var title=new StringBuilder(256);
@@ -586,13 +643,9 @@ class ComputerUse {
         public void FollowTargetDisplay() {
             if (!IsWindow(Target)) return;
             Rectangle work=Screen.FromHandle(Target).WorkingArea;
-            int width=Math.Min(530,Math.Max(280,work.Width-20));
-            if (Width!=width) {
-                Width=width;
-                using (var shape=RoundedFrame(new Rectangle(0,0,Width,Height),14))
-                    Region=new Region(shape);
-            }
-            var next=new Point(work.Left+(work.Width-width)/2,work.Top+10);
+            LayoutForDisplay((int)GetDpiForWindow(Target),work);
+            int width=Width, margin=(int)Math.Round(10*layoutDpi/96f);
+            var next=new Point(work.Left+(work.Width-width)/2,work.Top+margin);
             // The topmost HUD must not become its own title-bar occluder.
             // Prefer the top edge, but park at the bottom if it overlaps the
             // draggable title bar of the authorized window. STOP remains clickable.
@@ -603,7 +656,7 @@ class ComputerUse {
                     Math.Min(targetRect.Bottom,targetRect.Top+50));
                 var proposed=new Rectangle(next,new Size(width,Height));
                 if (proposed.IntersectsWith(titleBar))
-                    next=new Point(next.X,work.Bottom-Height-10);
+                    next=new Point(next.X,work.Bottom-Height-margin);
             }
             if (Location!=next) Location=next;
             string target=TargetCaption();

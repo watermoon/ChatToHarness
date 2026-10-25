@@ -48,8 +48,18 @@ function fixture(t, options = {}) {
   fs.writeFileSync(path.join(engine, 'command-manager.js'), 'export const commandManager={validateCommand:async command=>!command.includes("blocked-marker")};');
   const configHome = path.join(home, 'config'); fs.mkdirSync(configHome); atomicJson(path.join(configHome, 'config.json'), {defaultShell: process.platform === 'linux' ? '/bin/sh' : defaultShell()});
   const config = {home, engineEntry: path.join(engine, 'index.js'), configHome, nodePath: process.execPath, processHost: windowsProcessHost(), ...options};
+  const workers = [];
+  if (!options.launch) config.launch = (...args) => {
+    const child = require('node:child_process').spawn(...args);
+    workers.push(new Promise(resolve => child.once('close', resolve)));
+    return child;
+  };
   const store = new TaskStore(config), ids = [];
-  t.after(async () => { for (const id of ids) try { store.cancel(id, project); } catch {} await until(() => ids.every(id => { try { return store.status(id, project).terminal; } catch { return true; } }), 12000); fs.rmSync(home, {recursive: true, force: true, maxRetries: 10, retryDelay: 100}); });
+  t.after(async () => { for (const id of ids) try { store.cancel(id, project); } catch {} await until(() => ids.every(id => { try { return store.status(id, project).terminal; } catch { return true; } }), 12000);
+    // Terminal state is persisted before the worker exits. Await actual handle
+    // release before removing its Unicode working directory on Windows.
+    await Promise.all(workers);
+    fs.rmSync(home, {recursive: true, force: true, maxRetries: 10, retryDelay: 100}); });
   const command = code => {
     const name = '.task-' + crypto.createHash('sha256').update(code).digest('hex').slice(0, 16) + '.cjs';
     const script = path.join(project, name);

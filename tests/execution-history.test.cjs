@@ -111,7 +111,7 @@ test('50MiB hard cap counts actual stored output while active and drops writes o
   locked(home,()=>assert.equal(writeBudgeted(home,1,()=>{throw Error('must not write');}),false));
 });
 test('retention ignores symlinks and hardlinks and purges previous app logs and temporary diagnostics',t=>{
-  const {home}=fixture(t);const logs=path.join(home,'logs'),diagnostics=path.join(home,'diagnostics');fs.mkdirSync(logs);fs.mkdirSync(diagnostics);const outside=path.join(home,'keep');fs.writeFileSync(outside,'keep');fs.symlinkSync(outside,path.join(diagnostics,'link'));fs.linkSync(outside,path.join(diagnostics,'hardlink'));
+  const {home}=fixture(t);const logs=path.join(home,'logs'),diagnostics=path.join(home,'diagnostics');fs.mkdirSync(logs);fs.mkdirSync(diagnostics);const outside=path.join(home,'keep');fs.writeFileSync(outside,'keep');require('./link-fixture.cjs').fileLink(t,outside,path.join(diagnostics,'link'));fs.linkSync(outside,path.join(diagnostics,'hardlink'));
   const file=path.join(logs,'app.log.previous');fs.writeFileSync(file,'old');const old=Date.now()-AGE-1000;fs.utimesSync(file,old/1000,old/1000);locked(home,()=>cleanup(home));assert.ok(!fs.existsSync(file));assert.equal(fs.readFileSync(outside,'utf8'),'keep');
 });
 test('delivery failure after successful execution never changes execution outcome; local writes never acknowledge remote delivery',async t=>{

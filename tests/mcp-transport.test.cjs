@@ -163,18 +163,21 @@ lines.on('line', line => {
   for (const service of ['A', 'B']) {
     const transport = new ManagedStdioTransport({ command: process.execPath, args: [entry, ...literalArgs], cwd: directory,
       env: toolEnvironment(inherited, { [`SERVICE_${service}`]: `explicit-${service}` }) }, { processHost: windowsProcessHost() });
-    t.after(() => transport.close());
+    let closed;
+    t.after(async () => { await transport.close(); await closed; });
     let resolveResponse;
     let rejectResponse;
     const response = new Promise((resolve, reject) => { resolveResponse = resolve; rejectResponse = reject; });
     transport.onmessage = resolveResponse;
     transport.onerror = rejectResponse;
     await transport.start();
+    closed = new Promise(resolve => transport.child.once('close', resolve));
     await transport.send({ jsonrpc: '2.0', id: service, method: 'echo', params: {} });
     const message = await response;
     assert.deepEqual(message.result.args, literalArgs);
     assert.deepEqual(message.result.env, { [`SERVICE_${service}`]: `explicit-${service}` });
     await transport.close();
+    await closed;
     assert.notEqual(transport.child.exitCode ?? transport.child.signalCode, null);
   }
   assert.equal(fs.existsSync(path.join(directory, 'unsafe')), false);

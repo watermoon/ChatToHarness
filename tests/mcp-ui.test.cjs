@@ -105,6 +105,79 @@ async function rendererFixture(state = initialState(), overrides = {}, clipboard
   return { document, calls, node: id => document.getElementById(id), update: value => subscriber(value), api };
 }
 
+test('connection proxy opt-in preserves drafts and saves before connecting', async () => {
+  const state = initialState();
+  state.settings.tunnelId = 'tunnel_' + 'a'.repeat(32);
+  state.settings.keySaved = true;
+  const calls = [];
+  const f = await rendererFixture(state, {
+    async saveSettings(value) { calls.push('save'); Object.assign(state.settings, value); return state; },
+    async connect() { calls.push('connect'); assert.equal(state.settings.proxy.mode, 'system'); return state; },
+  });
+  assert.equal(f.node('proxy-mode').value, 'direct');
+  assert.equal(f.node('panel-proxy').hidden, true);
+  await f.node('open-proxy-settings').emit('click');
+  assert.equal(f.node('panel-proxy').hidden, false);
+  assert.equal(f.node('panel-connection').hidden, true);
+  assert.equal(f.node('page-title').textContent, '代理设置');
+  assert.deepEqual(calls, []);
+  f.node('proxy-mode').value = 'system';
+  await f.node('proxy-mode').emit('input');
+  await f.node('back-to-connection').emit('click');
+  assert.equal(f.node('panel-proxy').hidden, true);
+  assert.equal(f.node('panel-connection').hidden, false);
+  await f.node('open-proxy-settings').emit('click');
+  assert.equal(f.node('proxy-mode').value, 'direct');
+  f.node('proxy-mode').value = 'system';
+  assert.equal(f.node('proxy-mode').value, 'system');
+  f.update({ ...state, runtime: { state: 'ready' } });
+  assert.equal(f.node('proxy-mode').value, 'system');
+  await f.node('nav-connection').emit('click');
+  await f.node('settings-form').emit('submit');
+  await settled();
+  assert.deepEqual(calls, ['save', 'connect']);
+  const reloaded = await rendererFixture(state);
+  assert.equal(reloaded.node('proxy-mode').value, 'system');
+});
+
+test('proxy page saves independently, retains credential drafts and restores current adapter defaults',async()=>{
+  const state=initialState(),calls=[];
+  const f=await rendererFixture(state,{
+    async saveSettings(value){calls.push(value);Object.assign(state.settings,value);return state;},
+    async getProxyDefaults(){return ['localhost','203.0.113.128/25'];},
+    async connect(){throw new Error('saving proxy must not connect');},
+  });
+  f.node('api-key').value='unsaved-synthetic-key';
+  await f.node('open-proxy-settings').emit('click');
+  f.node('proxy-mode').value='manual';await f.node('proxy-mode').emit('input');
+  assert.equal(f.node('proxy-manual-fields').hidden,false);
+  f.node('proxy-type').value='socks5';f.node('proxy-host').value='127.0.0.1';f.node('proxy-port').value='1080';
+  await f.node('proxy-reset-bypass').emit('click');await settled();
+  assert.equal(f.node('proxy-bypass').value,'localhost\n203.0.113.128/25');
+  await f.node('settings-form').emit('submit');await settled();
+  assert.equal(calls.length,1);assert.deepEqual(Object.keys(calls[0]),['proxy']);
+  assert.equal(calls[0].proxy.type,'socks5');assert.equal(calls[0].proxy.port,1080);
+  assert.equal(f.node('api-key').value,'unsaved-synthetic-key');
+  assert.equal(f.node('panel-proxy').hidden,false);
+});
+
+test('proxy authentication draft tests without saving, cancel clears secrets and preserves other settings',async()=>{
+  const state=initialState(),calls=[];
+  const f=await rendererFixture(state,{
+    async testProxy(value){calls.push(value);return {ok:false,code:'PROXY_TEST_AUTH_FAILED'};},
+    async saveSettings(){throw new Error('test and cancel must not save');},
+  });
+  f.node('api-key').value='other-unsaved-secret';await f.node('open-proxy-settings').emit('click');
+  f.node('proxy-mode-manual').value='manual';await f.node('proxy-mode-manual').emit('input');
+  assert.equal(f.node('proxy-auth-fields').hidden,false);
+  f.node('proxy-username').value='fixture';f.node('proxy-password').value='synthetic-secret';f.node('proxy-test-url').value='http://fixture.invalid';
+  await f.node('proxy-test').emit('click');await settled();
+  assert.equal(calls.length,1);assert.equal(calls[0].proxyPassword,'synthetic-secret');
+  assert.equal(f.node('proxy-test-result').textContent,'代理认证失败，请检查用户名和密码。');
+  await f.node('proxy-cancel').emit('click');assert.equal(f.node('proxy-password').value,'');assert.equal(f.node('proxy-mode').value,'direct');
+  assert.equal(f.node('api-key').value,'other-unsaved-secret');assert.equal(f.node('panel-connection').hidden,false);
+});
+
 test('a healthy tunnel still shows degraded tool health and clears after recovery', async () => {
   const state=initialState();
   state.runtime={state:'ready',localReady:true,toolsCount:12,tools_health:'degraded',tools_ready:false,

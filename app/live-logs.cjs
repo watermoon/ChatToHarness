@@ -17,9 +17,13 @@ function openLog(home, name) {
     const directory = path.join(home, 'logs');
     const folder = fs.lstatSync(directory);
     if (!folder.isDirectory() || folder.isSymbolicLink()) return null;
-    fd = fs.openSync(path.join(directory, name), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const file = path.join(directory, name), before = fs.lstatSync(file);
+    // Windows has no O_NOFOLLOW. Reject reparse links before opening, and
+    // verify the opened file is still the one we inspected.
+    if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1) return null;
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1) { fs.closeSync(fd); return null; }
+    if (!stat.isFile() || stat.nlink !== 1 || stat.dev !== before.dev || stat.ino !== before.ino) { fs.closeSync(fd); return null; }
     return {fd, size: stat.size, identity: [stat.dev, stat.ino, stat.birthtimeMs].join(':'), name};
   } catch {
     if (fd !== undefined) try { fs.closeSync(fd); } catch {}

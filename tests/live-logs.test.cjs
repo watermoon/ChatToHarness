@@ -112,10 +112,13 @@ test('max bytes, count and file safety bound reads even with large or redirected
   assert.equal(recent.more, false);
   assert.equal(feed.read({limit: 999}).entries.length <= MAX_LINES, true);
   assert.ok(MAX_BYTES <= 128 * 1024);
-  const external = path.join(dir, 'secret.txt'); fs.writeFileSync(external, 'dont-read');
+  const external = path.join(dir, 'secret.txt'); fs.writeFileSync(external, row('mcp-call', {tool: 'must-not-read'}));
   fs.unlinkSync(path.join(dir, 'logs', 'app.log'));
-  fs.symlinkSync(external, path.join(dir, 'logs', 'app.log'));
+  const removeLink = require('./link-fixture.cjs').fileLink(t, external, path.join(dir, 'logs', 'app.log'));
   assert.deepEqual(feed.read().entries, []);
+  removeLink();
+  fs.copyFileSync(external, path.join(dir, 'logs', 'app.log'));
+  assert.match(feed.read().entries[0].message, /must-not-read/);
   fs.unlinkSync(path.join(dir, 'logs', 'app.log'));
   fs.linkSync(external, path.join(dir, 'logs', 'app.log'));
   assert.deepEqual(feed.read().entries, []);

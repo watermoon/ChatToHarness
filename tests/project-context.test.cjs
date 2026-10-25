@@ -158,9 +158,9 @@ test('shared references use authorized folders without expanding project target 
   assert.equal((await f.contexts.getContext({project_path:f.root})).rules_index[0].path,outside);
   f.put('AGENTS.md', 'Local only');
   assert.equal((await f.contexts.getContext({project_path:f.root,rule_paths:[outside]})).loaded_rules[0].content,'# Outside');
-  fs.symlinkSync(outside, path.join(f.root, 'linked.md'));
-  assert.equal((await f.contexts.getContext({project_path:f.root,rule_paths:['linked.md']})).loaded_rules[0].path,outside);
-  await assert.rejects(f.contexts.getContext({ project_path: f.root, target_paths: ['linked.md'] }), { code: 'TARGET_OUTSIDE_PROJECT' });
+  require('./link-fixture.cjs').directoryLink(f.temporary, path.join(f.root, 'linked'));
+  assert.equal((await f.contexts.getContext({project_path:f.root,rule_paths:['linked/outside.md']})).loaded_rules[0].path,outside);
+  await assert.rejects(f.contexts.getContext({ project_path: f.root, target_paths: ['linked/outside.md'] }), { code: 'TARGET_OUTSIDE_PROJECT' });
 });
 
 test('reference errors are soft, invalid AGENTS blocks only writes, and tokens remain local', async (t) => {
@@ -213,7 +213,7 @@ test('nonexistent write paths retain realpath confinement and new child director
   await assert.rejects(f.contexts.validate([loaded.project_context_token], [file]), { code: 'PROJECT_CONTEXT_STALE' });
   const outside = path.join(f.temporary, 'outside');
   fs.mkdirSync(outside);
-  fs.symlinkSync(outside, path.join(f.root, 'escape'));
+  require('./link-fixture.cjs').directoryLink(outside, path.join(f.root, 'escape'));
   await assert.rejects(f.contexts.getContext({ project_path: f.root, target_paths: ['escape/new-file.txt'] }), { code: 'TARGET_OUTSIDE_PROJECT' });
 });
 
@@ -257,8 +257,8 @@ test('context and file authorization reject folders outside app settings, includ
   assert.ok(context.diagnostics.some(item=>item.code==='PATH_NOT_ALLOWED'&&!item.blocks_writes));
   await assert.rejects(narrow.getContext({project_path:f.temporary}),{code:'PATH_NOT_ALLOWED'});
   await assert.rejects(narrow.getContext({project_path:f.root,rule_paths:[shared]}),{code:'PATH_NOT_ALLOWED'});
-  fs.symlinkSync(shared,path.join(f.root,'escape.md'));
-  await assert.rejects(narrow.authorizePaths([path.join(f.root,'escape.md')]),{code:'PATH_NOT_ALLOWED'});
+  require('./link-fixture.cjs').directoryLink(f.temporary,path.join(f.root,'escape'));
+  await assert.rejects(narrow.authorizePaths([path.join(f.root,'escape/shared.md')]),{code:'PATH_NOT_ALLOWED'});
 });
 
 test('concurrent loads share body reads and deleted AGENTS changes are detected', async t => {

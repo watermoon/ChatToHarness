@@ -275,11 +275,11 @@ test('malformed files are preserved and symlinks or hardlinks cannot redirect re
   const settings = f.make();
   const target = path.join(f.root, 'outside');
   fs.writeFileSync(target, 'outside-original');
-  fs.symlinkSync(target, f.file);
+  const removeLink = require('./link-fixture.cjs').fileLink(t, target, f.file);
   assert.throws(f.make, { code: 'UNSAFE_STORAGE' });
   assert.throws(() => settings.save(config()), { code: 'UNSAFE_STORAGE' });
   assert.equal(fs.readFileSync(target, 'utf8'), 'outside-original');
-  fs.unlinkSync(f.file);
+  removeLink();
   fs.linkSync(target, f.file);
   assert.throws(f.make, { code: 'UNSAFE_STORAGE' });
   assert.throws(() => settings.save(config()), { code: 'UNSAFE_STORAGE' });
