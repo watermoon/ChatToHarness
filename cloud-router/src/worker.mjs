@@ -21,10 +21,6 @@ async function equalSecret(actual, expected) {
   for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
 }
-function bearer(req) {
-  const match = /^Bearer (.+)$/i.exec(req.headers.get('authorization') || '');
-  return match?.[1] || '';
-}
 function getHub(env) { return env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName('default')); }
 function allowedTools(env) {
   const raw = String(env.ALLOWED_TOOLS || 'get_harness_status');
@@ -133,7 +129,8 @@ const tools = [
         tool_name: {type: 'string', description: 'Name of allowed local tool'},
         arguments: {type: 'object', additionalProperties: true}}}}
 ];
-export default {
+// This dispatcher is never a public Worker entrypoint. OAuthResourceServer must authenticate it.
+export const authorizedWorker = {
   async fetch(req, env) {
     const path = new URL(req.url).pathname;
     if (path === '/health' && req.method === 'GET') return json({ok: true, component: 'chattoharness-cloud-router'});
@@ -142,7 +139,6 @@ export default {
       return getHub(env).fetch(new Request('https://hub.internal/agent', req));
     }
     if (path !== '/mcp') return new Response('Not found', {status: 404});
-    if (!await equalSecret(bearer(req), env.MCP_BEARER_TOKEN)) return json({error: 'unauthorized'}, 401);
     if (req.method !== 'POST') return new Response('Use POST', {status: 405, headers: {Allow: 'POST'}});
     if (Number(req.headers.get('content-length')) > MAX_BODY) return json({error: 'request too large'}, 413);
     const raw = await req.text();

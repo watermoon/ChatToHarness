@@ -14,7 +14,7 @@ class Socket {
   close(code) { this.readyState = 3; this.closeCode = code; }
 }
 async function fixture() {
-  const {DeviceHub, default: worker} = await import(workerUrl);
+  const {DeviceHub, authorizedWorker: worker} = await import(workerUrl);
   const sockets = [];
   const env = {DEVICE_TOKENS: JSON.stringify({moon: DEVICE_TOKEN, mac: DEVICE_TOKEN}),
     MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
@@ -34,9 +34,8 @@ async function fixture() {
   };
   return {hub, env, worker, register, mcp};
 }
-test('MCP refuses unauthenticated requests and exposes only router tools', async () => {
+test('internal MCP dispatcher exposes only router tools (external auth is mandatory)', async () => {
   const f = await fixture();
-  assert.equal((await f.mcp('tools/list', {}, 'incorrect')).status, 401);
   const init = await f.mcp('initialize', {});
   assert.equal(init.body.result.serverInfo.name, 'chattoharness-cloud-router');
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),

@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "wrangler deploy --dry-run"
+    "check": "wrangler deploy --dry-run && wrangler deploy --dry-run -c auth-server/wrangler.toml",
+    "dev:auth": "wrangler dev -c auth-server/wrangler.toml"
   },
   "devDependencies": {
     "wrangler": "4.152.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.4"
   }
 }

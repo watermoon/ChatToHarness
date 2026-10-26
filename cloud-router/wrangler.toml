@@ -1,6 +1,9 @@
+# MCP resource Worker; OAuth must be deployed and validated before public activation.
 name = "chattoharness-cloud-router"
-main = "src/worker.mjs"
-compatibility_date = "2026-10-01"
+main = "src/secure-worker.mjs"
+compatibility_date = "2026-10-26"
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = false
 
 [[durable_objects.bindings]]
 name = "DEVICE_HUB"
@@ -10,5 +13,12 @@ class_name = "DeviceHub"
 tag = "v1"
 new_sqlite_classes = ["DeviceHub"]
 
+[[services]]
+binding = "AUTH_SERVER"
+service = "chattoharness-auth"
+
 [vars]
 ALLOWED_TOOLS = "get_harness_status"
+MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
+OAUTH_ISSUER = "https://auth.example.invalid"
+GITHUB_ALLOWED_USER_IDS = ""

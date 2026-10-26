@@ -788,3 +788,14 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [ ] Cloudflare 正式账号凭据与真实部署尚不可用；OAuth 2.1/CIMD 设计记录在 `cloud-router/OAUTH-PLAN.md`，**未实现**。
 - [ ] 需完成真实 Worker WebSocket、双设备同时在线、持久化授权和客户端 OAuth 端到端验收，之后才允许覆盖现有独立 Tunnel 连接。
 - [x] 本轮全量回归：`npm test` 591 项，575 通过、0 失败、16 跳过；macOS Node 语法检查通过（2026-10-26）。
+
+## 2026-10-26 Cloud Router P3 — OAuth 2.1（feat/cloudflare-multi-device-router）
+
+- [x] Cloudflare workers-oauth-provider 1.2.4 split workers：新增 auth-server（GitHub OAuth、同意页面、CIMD/DCR + PKCE、KV 授权数据）及 secure-worker（OAuthResourceServer、Service Binding audience/scope/有效期/撤销校验）。
+- [x] 正式 Worker 入口不再直接导出不受保护的旧路由；移除演示用 MCP_BEARER_TOKEN；设备 WebSocket 仍按独立设备密钥认证。
+- [x] 严格 GitHub 数字用户 ID 白名单，授权端和 MCP 资源端二次校验；配置默认空列表拒绝所有用户。
+- [x] 本地 Workerd：MCP 无授权 HTTP 401 + WWW-Authenticate，RFC 9728 元数据 HTTP 200，RFC 8414 发现含 PKCE S256/CIMD，DCR 注册 HTTP 201；同意页面、缺 Cookie 拒绝、同意后携带 state 跳转 GitHub OAuth 均通过。
+- [x] npm test：595 个测试中 579 通过 / 0 失败 / 16 跳过；两份 wrangler dry-run 构建通过。
+- [ ] 实际 GitHub OAuth 回调、令牌交换/刷新/撤销、Cloudflare 真实部署、ChatGPT 单插件 OAuth 接入仍待账号授权；绝不宣称已完成线上 E2E。
+- [ ] 多设备真机并发、权限及 Computer Use 仍需单独验收；现有三个 Tunnel 原样保留。
+- 续接步骤：阅读 cloud-router/P3-OAUTH.md，先配置真实域名、Cloudflare KV/GitHub OAuth App/ID 白名单与设备 secret；部署授权 Worker 再部署资源 Worker；先确认 OAuth 链路无误再切换任意连接。

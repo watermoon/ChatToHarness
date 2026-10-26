@@ -1,0 +1,17 @@
+# GitHub OAuth + Cloudflare OAuth Provider 1.x authorization server.
+name = "chattoharness-auth"
+main = "index.mjs"
+compatibility_date = "2026-10-26"
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = false
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "REPLACE_WITH_REAL_KV_ID"
+
+[vars]
+OAUTH_ISSUER = "https://auth.example.invalid"
+MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
+GITHUB_ALLOWED_USER_IDS = ""
+GITHUB_CLIENT_ID = ""
+# GITHUB_CLIENT_SECRET is a Cloudflare secret and must never appear here.
