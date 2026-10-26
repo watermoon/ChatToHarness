@@ -29,7 +29,7 @@ const home=storageDirectory({platform,userHome:os.homedir(),appData:process.env.
 app.setName(testMode?'ChatToHarness Acceptance '+require('node:crypto').createHash('sha256').update(home).digest('hex').slice(0,12):platform==='darwin'?'LocalHarness':product);
 app.setPath('userData',home);
 let history,diagnosticWriter,diagnosticError;
-let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
+let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,cloudRouter,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
 const indexURL=pathToFileURL(path.join(__dirname,'index.html')).href;
 const resources=(testMode&&process.env.LOCALHARNESS_RESOURCES)|| (app.isPackaged?process.resourcesPath:(process.env.LOCALHARNESS_RESOURCES||path.join(__dirname,'..','resources')));
 const links=Object.freeze({
@@ -55,7 +55,7 @@ function executionToLog(row){
     state:row.state,delivery:row.delivery,error_code:row.error_code||undefined,
     execution_state:row.execution_state,recovery_kind:row.recovery_kind,exit_code:Number.isInteger(row.exit_code)?row.exit_code:undefined});
 }
-function state(){return {diagnostics:diagnosticWriter?.status()||{state:diagnosticError?'unavailable':'starting',error_code:diagnosticError},settings:settings?settings.public():{tunnelId:'',directories:[],autoConnect:true,useSystemProxy:false,autoProjectContext:true,keySaved:false},runtime:fatal?{state:'failed',error:fatal,localReady:false,toolsCount:0}:runtime?.status()||{state:'unconfigured',error:'',localReady:false,toolsCount:0},mcp:{...(mcpManager?.status()||{servers:[],approvals:[],toolsVersion:0,allowAllTools:false}),computerUse:{...(computerUse?.status()||{enabled:false,available:false,registered:false,platform}),permissionPromptVisible}},versions,updates:updater?.status()||{current:versions.app,phase:'idle',automatic:preferences?.autoCheckUpdates!==false},actionEpoch,system:{platform,locale},testMode};}
+function state(){return {diagnostics:diagnosticWriter?.status()||{state:diagnosticError?'unavailable':'starting',error_code:diagnosticError},settings:settings?settings.public():{tunnelId:'',directories:[],autoConnect:true,useSystemProxy:false,autoProjectContext:true,keySaved:false},runtime:fatal?{state:'failed',error:fatal,localReady:false,toolsCount:0}:runtime?.status()||{state:'unconfigured',error:'',localReady:false,toolsCount:0},mcp:{...(mcpManager?.status()||{servers:[],approvals:[],toolsVersion:0,allowAllTools:false}),computerUse:{...(computerUse?.status()||{enabled:false,available:false,registered:false,platform}),permissionPromptVisible}},...(cloudRouter?{cloudRouter:cloudRouter.status()}:{}),versions,updates:updater?.status()||{current:versions.app,phase:'idle',automatic:preferences?.autoCheckUpdates!==false},actionEpoch,system:{platform,locale},testMode};}
 function publish(){const value=state();if(window&&!window.isDestroyed())window.webContents.send('localharness:state',value);refreshTray();}
 function show(){if(quitting)return;if(!window||window.isDestroyed())createWindow();if(window.isMinimized())window.restore();window.show();window.focus();}
 function restart(){
@@ -289,7 +289,7 @@ if(!acquireInstance({app,show,host:process})){}
 else{
   app.on('activate',show);app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{
-    if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;++actionEpoch;updater?.dispose();
+    if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;++actionEpoch;updater?.dispose();cloudRouter?.stop();
     void Promise.resolve(runtime?.close()).finally(async()=>{
       await history?.close();tray?.destroy();tray=null;log('quit');await diagnosticWriter?.close();quitReady=true;
       if(restarting){
@@ -354,6 +354,12 @@ else{
         }});
       mcpManager.history=history;
       mcpManager.broker=new McpGateway(mcpManager);runtime.gateway=mcpManager;
+      // Opt-in development bridge. Does not replace or share the existing Tunnel.
+      if(!testMode&&process.env.CTH_CLOUD_ROUTER_ENABLED==='1'){
+        const {CloudRouterService}=require('./cloud-router-service.cjs');
+        cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,log,onChange:publish});
+        cloudRouter.start({enabled:true,url:process.env.CTH_CLOUD_ROUTER_URL,token:process.env.CTH_CLOUD_DEVICE_TOKEN});
+      }
       mcpManager.on('state',()=>{const toolsCount=mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});
       mcpManager.on('approval',()=>{if(!quitting&&!installing)show();});
       if(settings.public().keySaved)runtime.update({state:'stopped'});

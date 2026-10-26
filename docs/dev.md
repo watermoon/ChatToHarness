@@ -777,3 +777,14 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [ ] 桌面端 Electron 网关真实适配、生命周期及设置 UI 未开发；保留原三个 Tunnel 连接。
 - [ ] 云端真实 Wrangler 部署、ChatGPT 统一插件 OAuth 接入、macOS/Windows 两台真机端到端验收未执行。
 - [ ] 写操作、Shell、Computer Use 未开放；需完成身份认证、设备级授权、审批、可靠状态核验及真实验收。
+
+
+## 2026-10-26 Cloud Router P2 — Mac 桌面接入（feat/cloudflare-multi-device-router）
+
+- [x] Mac 上新增 `app/cloud-router-agent.cjs` 和 `app/cloud-router-service.cjs`，设备 ID 复用本机持久 Computer Use 身份，独立进程内 MCP Manager 调用。
+- [x] Electron 启动/退出生命周期接入：仅设置 `CTH_CLOUD_ROUTER_ENABLED=1` 时才连接，保留原有 Tunnel；云状态脱敏展示。
+- [x] 云端、本地双白名单仅允许 `get_harness_status`，Terminal/文件写入/Computer Use 被显式拒绝；测试覆盖连接、拒绝和单设备指定。
+- [x] Wrangler 4.152.0 作为云端子项目依赖，`npm run check` 本地 dry-run 通过，Cloudflare Durable Object 绑定识别成功。
+- [ ] Cloudflare 正式账号凭据与真实部署尚不可用；OAuth 2.1/CIMD 设计记录在 `cloud-router/OAUTH-PLAN.md`，**未实现**。
+- [ ] 需完成真实 Worker WebSocket、双设备同时在线、持久化授权和客户端 OAuth 端到端验收，之后才允许覆盖现有独立 Tunnel 连接。
+- [x] 本轮全量回归：`npm test` 591 项，575 通过、0 失败、16 跳过；macOS Node 语法检查通过（2026-10-26）。

@@ -1,0 +1,14 @@
+{
+  "name": "chattoharness-cloud-router",
+  "private": true,
+  "type": "module",
+  "version": "0.2.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "4.152.0"
+  }
+}

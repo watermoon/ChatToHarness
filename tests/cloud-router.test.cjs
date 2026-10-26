@@ -58,7 +58,7 @@ test('one MCP endpoint dispatches to the explicitly requested device only', asyn
   const mac = await f.register('mac');
   const call = f.mcp('tools/call', {name: 'call_device_tool', arguments: {
     device_id: 'mac', tool_name: 'get_harness_status', arguments: {}}});
-  await new Promise(resolve => setTimeout(resolve, 0));
+  for (let i = 0; i < 200 && mac.messages.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(moon.messages.length, 1); // registration only
   assert.equal(mac.messages.length, 2);
   const id = mac.messages[1].request_id;
@@ -84,7 +84,8 @@ test('disconnect reports unknown execution, never replays on other device', asyn
   const mac = await f.register('mac');
   const call = f.mcp('tools/call', {name: 'call_device_tool', arguments: {
     device_id: 'moon', tool_name: 'get_harness_status', arguments: {}}});
-  await new Promise(resolve => setTimeout(resolve, 0));
+  for (let i = 0; i < 200 && moon.messages.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(moon.messages.length, 2, 'dispatch was sent before disconnect');
   f.hub.webSocketClose(moon);
   const response = await call;
   assert.equal(JSON.parse(response.body.result.content[0].text).code, 'EXECUTION_UNKNOWN');

@@ -46,3 +46,17 @@ node --test tests/cloud-router.test.cjs tests/cloud-router-agent.test.cjs
 - Preserve the current three Tunnel connections until the new single ChatGPT plugin works in end-to-end acceptance.
 
 No GPU/VM is required; Cloudflare provides the hosted routing plane while each device executes its own local tools.
+
+## Stage P2: desktop integration, opt-in only
+
+The desktop Electron main process now bundles `app/cloud-router-agent.cjs` and `app/cloud-router-service.cjs`. Default is OFF. This does not touch the existing Secure MCP Tunnel. For a **trusted development environment only**, supply these variables at process startup:
+
+```text
+CTH_CLOUD_ROUTER_ENABLED=1
+CTH_CLOUD_ROUTER_URL=wss://<your-owned-worker-host>/agent
+CTH_CLOUD_DEVICE_TOKEN=<unique-device-secret-minimum-24-characters>
+```
+
+The stable device ID is the existing `computer-use-device-id`, not the secret. Cloudflare's `DEVICE_TOKENS` must map that ID to the matching token. The Electron state includes a sanitized `cloudRouter` connection status when opted in. The Manager enforces only `get_harness_status` with empty arguments in this stage. **File edits, shell, Git, and Computer Use are not remotely enabled.** Read `OAUTH-PLAN.md` before any ChatGPT/public deployment.
+
+Local setup (Mac and Windows): `cd cloud-router && npm ci && npm run check` validates the Worker bundle and Durable Object binding without deploying. Wrangler 4.152.0 is pinned in the lockfile. Neither a Cloudflare account nor secrets are needed for this dry run. `npm run deploy` is intentionally not part of automated tests.
