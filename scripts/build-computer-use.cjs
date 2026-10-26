@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {execFileSync} = require('node:child_process');
+const {MINIMUM_MACOS, verifyMacHelper} = require('./mac-helper-compatibility.cjs');
 function buildComputerUse(root = path.resolve(__dirname, '..')) {
   const directory = path.join(root, 'resources', 'computer-use');
   fs.mkdirSync(directory, {recursive: true});
@@ -19,11 +20,24 @@ function buildComputerUse(root = path.resolve(__dirname, '..')) {
   }
   if (process.platform === 'darwin') {
     const output = path.join(directory, 'ChatToHarness.MacComputerUse');
-    execFileSync('xcrun', ['swiftc', '-parse-as-library', '-O',
-      path.join(root, 'native', 'MacComputerUse.swift'),
-      path.join(root, 'native', 'MacHUDSurface.swift'),
-      path.join(root, 'native', 'MacCursorGlow.swift'),
-      path.join(root, 'native', 'MacCursorTrajectory.swift'), '-o', output], {stdio: 'pipe'});
+    // Both slices use an explicit target even on newer SDK/build hosts.
+    const temporary = fs.mkdtempSync(path.join(directory, '.mac-helper-'));
+    try {
+      const slices = ['arm64', 'x86_64'].map(arch => {
+        const slice = path.join(temporary, arch);
+        execFileSync('xcrun', ['swiftc', '-target', `${arch}-apple-macosx${MINIMUM_MACOS}`, '-parse-as-library', '-O',
+          path.join(root, 'native', 'MacComputerUse.swift'),
+          path.join(root, 'native', 'MacHUDSurface.swift'),
+          path.join(root, 'native', 'MacCursorGlow.swift'),
+          path.join(root, 'native', 'MacCursorTrajectory.swift'), '-o', slice],
+          {stdio: 'pipe', env: {...process.env, MACOSX_DEPLOYMENT_TARGET: MINIMUM_MACOS}});
+        return slice;
+      });
+      const combined = path.join(temporary, 'ChatToHarness.MacComputerUse');
+      execFileSync('xcrun', ['lipo', '-create', ...slices, '-output', combined], {stdio: 'pipe'});
+      verifyMacHelper(combined);
+      fs.renameSync(combined, output);
+    } finally { fs.rmSync(temporary, {recursive: true, force: true}); }
     fs.chmodSync(output, 0o755);
     fs.writeFileSync(path.join(directory, 'mcp-config.json'), JSON.stringify({mcpServers: {
       'macos-computer': {command: process.execPath, args: [path.join(root, 'app', 'macos-computer-use-stdio.cjs')],

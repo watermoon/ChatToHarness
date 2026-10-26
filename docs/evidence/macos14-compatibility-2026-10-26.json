@@ -1,0 +1,159 @@
+{
+  "date": "2026-10-26",
+  "platform": {
+    "macOS": "14.6.1",
+    "build": "23G93",
+    "machine": "arm64",
+    "x86_64_execution": "Rosetta"
+  },
+  "scope": "Issue #2 local macOS 14 compatibility repair; no installation, commit, push or PR",
+  "binary": {
+    "minimums": [
+      "14.0",
+      "14.0"
+    ],
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ],
+    "libraries": [
+      "/usr/lib/libSystem.B.dylib",
+      "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+      "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+      "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+      "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit",
+      "/usr/lib/libobjc.A.dylib",
+      "/usr/lib/swift/libswiftAVFoundation.dylib",
+      "/usr/lib/swift/libswiftCore.dylib",
+      "/usr/lib/swift/libswiftCoreAudio.dylib",
+      "/usr/lib/swift/libswiftCoreFoundation.dylib",
+      "/usr/lib/swift/libswiftCoreImage.dylib",
+      "/usr/lib/swift/libswiftCoreMIDI.dylib",
+      "/usr/lib/swift/libswiftCoreMedia.dylib",
+      "/usr/lib/swift/libswiftDarwin.dylib",
+      "/usr/lib/swift/libswiftDispatch.dylib",
+      "/usr/lib/swift/libswiftIOKit.dylib",
+      "/usr/lib/swift/libswiftMetal.dylib",
+      "/usr/lib/swift/libswiftOSLog.dylib",
+      "/usr/lib/swift/libswiftObjectiveC.dylib",
+      "/usr/lib/swift/libswiftQuartzCore.dylib",
+      "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+      "/usr/lib/swift/libswiftXPC.dylib",
+      "/usr/lib/swift/libswift_Concurrency.dylib",
+      "/usr/lib/swift/libswiftos.dylib",
+      "/usr/lib/swift/libswiftsimd.dylib"
+    ]
+  },
+  "permissions": {
+    "initial": {
+      "screen_recording": true,
+      "accessibility": false
+    },
+    "request_attempted": true,
+    "user_confirmed_accessibility_enabled": true,
+    "final": {
+      "request_attempted": false,
+      "identity_hint": "TCC grants belong to the actual process/app identity; restart the helper after changing macOS Privacy & Security.",
+      "accessibility": true,
+      "screen_recording": true
+    },
+    "packaged_electron_ipc": {
+      "platform": "darwin",
+      "granted": true,
+      "missing": [],
+      "authorization": "system",
+      "request_attempted": false
+    }
+  },
+  "checks": {
+    "full_suite_initial": {
+      "tests": 577,
+      "pass": 564,
+      "fail": 2,
+      "skip": 11,
+      "reason": "Old packaging fixtures used text instead of Mach-O; fixtures replaced with actual binary and codesign."
+    },
+    "full_suite_final": {
+      "tests": 577,
+      "pass": 566,
+      "fail": 0,
+      "skip": 11
+    },
+    "focused_final": {
+      "tests": 44,
+      "pass": 44,
+      "fail": 0
+    },
+    "packaged_ipc_dyld_fixture": {
+      "pass": true,
+      "code": "CU_HELPER_OS_INCOMPATIBLE"
+    },
+    "packaged_code_matches_source": [
+      "app/base-computer-use.cjs",
+      "app/native-helper-error.cjs",
+      "app/computer-use-permissions.cjs",
+      "app/main.cjs",
+      "app/renderer.js",
+      "app/locales.js"
+    ],
+    "codesign_deep_strict": true,
+    "dmg_checksum_validation": true,
+    "git_diff_check": true
+  },
+  "real_gui": {
+    "source_helper_final": "PASS",
+    "packaged_helper_final": "PASS",
+    "verified": [
+      "targeted screenshot",
+      "real click",
+      "text input",
+      "BACKSPACE",
+      "single-use observation rejection",
+      "visible cursor motion",
+      "scroll",
+      "transient pointer perturbation recovery",
+      "same-display atomic drag",
+      "cross-display atomic drag",
+      "mouse release",
+      "close_session",
+      "global Esc stops helper while fixture remains open"
+    ],
+    "initial_failures": [
+      "First source-helper session initialization returned CU_NATIVE_ERROR; cause was not established.",
+      "Second run completed basic input and same-display drag but cross-display release-state assertion read true. No product fix or bypass was applied; subsequent standalone source-helper and packaged-helper runs passed."
+    ],
+    "unverified": [
+      "modifier shortcuts",
+      "physical STOP button click"
+    ]
+  },
+  "artifact": {
+    "path": "dist/mac14-compat-20261026/ChatToHarness-0.8.1-macos-arm64.dmg",
+    "bytes": 267632086,
+    "sha256": "8611260f267632b5f2901406fb771e8856c5dfa2d8fc955ab003f36961f3cec1"
+  },
+  "limitations": [
+    "Full installer is arm64 only: pinned Node/Tunnel resources do not yet support darwin-x64. Only the Swift helper is universal.",
+    "No native Intel Mac, exact macOS 14.0 or later macOS system was tested.",
+    "Ad hoc signature only; Developer ID signing/notarization, installation, installed-app TCC identity, remote CI and real ChatGPT end-to-end remain unverified.",
+    "Permission status belongs to the process/app identity; this test does not prove grants for a newly installed copy."
+  ],
+  "logs": {
+    "build-helper.log": ".cache/acceptance/mac14-20261026/build-helper.log",
+    "request-permissions.json": ".cache/acceptance/mac14-20261026/request-permissions.json",
+    "full-tests.log": ".cache/acceptance/mac14-20261026/full-tests.log",
+    "full-tests-final.log": ".cache/acceptance/mac14-20261026/full-tests-final.log",
+    "focused-final.log": ".cache/acceptance/mac14-20261026/focused-final.log",
+    "gui.log": ".cache/acceptance/mac14-20261026/gui.log",
+    "gui-startup-trace.log": ".cache/acceptance/mac14-20261026/gui-startup-trace.log",
+    "gui-final.log": ".cache/acceptance/mac14-20261026/gui-final.log",
+    "gui-packaged.log": ".cache/acceptance/mac14-20261026/gui-packaged.log",
+    "package-final.log": ".cache/acceptance/mac14-20261026/package-final.log",
+    "package-acceptance-final.log": ".cache/acceptance/mac14-20261026/package-acceptance-final.log",
+    "dmg-verify.log": ".cache/acceptance/mac14-20261026/dmg-verify.log",
+    "artifact-identity.json": ".cache/acceptance/mac14-20261026/artifact-identity.json"
+  }
+}

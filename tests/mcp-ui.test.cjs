@@ -723,3 +723,16 @@ test('pending local approvals stay inside the active drawer and return globally 
   assert.equal(f.calls.at(-1).args[0].id,'pending-one');
   assert.equal(f.calls.at(-1).args[0].allow,true);
 });
+
+test('Mac helper loader failure shows an actionable message in both enable errors and startup permission dialog',async()=>{
+ const state=initialState();
+ state.mcp.computerUse={platform:'darwin',available:true,enabled:false,registered:false,
+   permissionPromptVisible:true,permission:{granted:false,missing:[],code:'CU_HELPER_OS_INCOMPATIBLE'}};
+ const f=await rendererFixture(state,{
+   async mcpSetComputerUse(){throw Error('CU_HELPER_OS_INCOMPATIBLE');}
+ });
+ assert.match(f.node('mcp-computer-use-permission-detail').textContent,/macOS 14/);
+ const toggle=f.node('mcp-computer-use');toggle.checked=true;await toggle.emit('change');
+ assert.match(f.node('error-message').textContent,/macOS 14/);
+ assert.doesNotMatch(f.node('error-message').textContent,/MCP 操作未完成/);
+});

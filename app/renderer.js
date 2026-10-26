@@ -105,6 +105,14 @@
   const safeMessage = (error) => typeof error?.message === 'string' && error.message.trim()
     ? error.message : t('操作未完成，请重试或查看日志。');
   const mcpErrors = {
+    CU_HELPER_UNAVAILABLE: '电脑操作组件缺失，请重新安装 ChatToHarness。',
+    CU_HELPER_OS_INCOMPATIBLE: '电脑操作组件与当前 macOS 不兼容或缺少系统运行库，请安装支持 macOS 14 的 ChatToHarness 安装包。',
+    CU_HELPER_ARCH_INCOMPATIBLE: '电脑操作组件不支持当前处理器，请安装匹配此 Mac 的安装包。',
+    CU_HELPER_NOT_EXECUTABLE: '系统拒绝启动电脑操作组件，请检查应用文件权限或重新安装。',
+    CU_HELPER_TIMEOUT: '电脑操作组件响应超时，请检查系统授权弹窗后重试。',
+    CU_HELPER_START_FAILED: '电脑操作组件启动失败，请查看应用日志并检查安装包是否完整。',
+    CU_PERMISSION_CHECK_FAILED: '电脑操作组件返回了无效权限状态，请重新安装或查看应用日志。',
+
     MCP_APPROVAL_DENIED: '已拒绝此次工具调用。', MCP_APPROVAL_EXPIRED: '此次调用的确认已过期，未获得执行授权。',
     MCP_AUTH_REQUIRED: '服务认证失败，请检查密钥或请求头。', MCP_CANCELLED: 'MCP 操作已取消。',
     MCP_CONNECTION_FAILED: 'MCP 服务连接失败，请检查配置或稍后重试。', MCP_CONNECT_TIMEOUT: '连接 MCP 服务超时，请检查服务是否可用。',
@@ -468,7 +476,8 @@
     const missing=Array.isArray(permission.missing)?permission.missing:[];
     const title=missing.map(x=>x==='screen_recording'?t('屏幕录制'):x==='accessibility'?t('辅助功能'):x).join('、');
     byId('mcp-computer-use-permission-detail').textContent=cu.platform==='darwin'
-      ? title ? t('缺少系统权限：{permissions}',{permissions:title}) : t('权限检查失败，请重新检查或在系统设置中确认。')
+      ? permission.code && mcpErrors[permission.code] ? t(mcpErrors[permission.code])
+        : title ? t('缺少系统权限：{permissions}',{permissions:title}) : t('权限检查失败，请重新检查或在系统设置中确认。')
       : t('Windows 窗口授权未完成。请再次选择目标窗口并确认授权。');
     const mac=cu.platform==='darwin';
     byId('mcp-computer-use-request').hidden=!mac;

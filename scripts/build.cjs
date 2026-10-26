@@ -42,6 +42,8 @@ function signingConfig(platform, env) {
   return { signed, env: buildEnv, overrides };
 }
 function verifyResources(resources, options = {}) {
+  if (process.platform === 'darwin') require('./mac-helper-compatibility.cjs').verifyMacHelper(
+    path.join(resources, 'computer-use/ChatToHarness.MacComputerUse'));
   const receipt = JSON.parse(fs.readFileSync(path.join(resources, 'bundle.json'), 'utf8'));
   const pin = versions.forPlatform();
   if (receipt.platform !== `${process.platform}-${process.arch}` || receipt.node !== versions.node.version ||

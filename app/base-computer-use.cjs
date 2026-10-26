@@ -110,7 +110,9 @@ class NativeConnection {
     // Conversation titles are sent only via private stdio, never argv.
     if (session_id && operation !== 'list_windows')
       nativeArguments.push(session_id);
-    this.child = spawn(executable, nativeArguments, {windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'ignore'], env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(SystemRoot|WINDIR|TEMP|TMP|USERPROFILE|HOME|TMPDIR|USER|LOGNAME|LANG)$/i.test(k)))});
+    this.child = spawn(executable, nativeArguments, {windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'], env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(SystemRoot|WINDIR|TEMP|TMP|USERPROFILE|HOME|TMPDIR|USER|LOGNAME|LANG)$/i.test(k)))});
+    let startupStderr = '';
+    this.child.stderr.on('data', chunk => { if(this.initial) startupStderr = (startupStderr + chunk.toString()).slice(0,8192); });
     this.pending = null;
     this.ready = new Promise((resolve, reject) => { this.initial = {resolve, reject}; });
     this.lines = createInterface({input: this.child.stdout});
@@ -130,9 +132,11 @@ class NativeConnection {
         waiter.reject(error);
       } else waiter.resolve(data);
     });
-    this.child.on('error', () => this.stop('CU_HELPER_UNAVAILABLE'));
-    this.child.on('exit', () => this.stop('CU_SESSION_CLOSED'));
-    this.child.stdin.on('error', () => this.stop('CU_SESSION_CLOSED'));
+    this.child.on('error', error => this.stop(require('./native-helper-error.cjs').nativeHelperError(error).code));
+    // close follows stderr draining, so dyld diagnostics are available here.
+    this.child.on('close', () => this.stop(this.initial
+      ? require('./native-helper-error.cjs').nativeHelperError(null,startupStderr).code : 'CU_SESSION_CLOSED'));
+    this.child.stdin.on('error', () => { if(!this.initial) this.stop('CU_SESSION_CLOSED'); });
   }
   request(args) {
     if (this.closed || this.pending) return Promise.reject(fail('CU_SESSION_CLOSED'));

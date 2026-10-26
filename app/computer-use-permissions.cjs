@@ -1,6 +1,8 @@
 'use strict';
 const {execFile}=require('node:child_process');
 const fs=require('node:fs');
+const {nativeHelperError}=require('./native-helper-error.cjs');
+const permissionFailure=()=>Object.assign(Error('CU_PERMISSION_CHECK_FAILED'),{code:'CU_PERMISSION_CHECK_FAILED'});
 
 const CODES=new Set(['CU_SCREEN_RECORDING_REQUIRED','CU_ACCESSIBILITY_REQUIRED','CU_CONSENT_DENIED']);
 function permissionCode(result) {
@@ -17,15 +19,15 @@ class ComputerUsePermissions {
   }
   async check({request=false}={}) {
     if(this.platform==='win32')return {platform:'win32',granted:true,missing:[],authorization:'per_window'};
-    if(this.platform!=='darwin'||!this.helper||!fs.existsSync(this.helper))throw Error('CU_HELPER_UNAVAILABLE');
+    if(this.platform!=='darwin'||!this.helper||!fs.existsSync(this.helper))throw Object.assign(Error('CU_HELPER_UNAVAILABLE'),{code:'CU_HELPER_UNAVAILABLE'});
     const data=await new Promise((resolve,reject)=>{
       this.execute(this.helper,[request?'request_permissions':'permission_status'],
-        {timeout:12000,encoding:'utf8',maxBuffer:4096,windowsHide:true},(error,stdout)=>{
-          if(error)return reject(Error('CU_PERMISSION_CHECK_FAILED'));
-          try{resolve(JSON.parse(stdout.trim()));}catch{reject(Error('CU_PERMISSION_CHECK_FAILED'));}
+        {timeout:12000,encoding:'utf8',maxBuffer:4096,windowsHide:true},(error,stdout,stderr)=>{
+          if(error)return reject(nativeHelperError(error,stderr));
+          try{resolve(JSON.parse(stdout.trim()));}catch{reject(permissionFailure());}
         });
     });
-    if(typeof data.screen_recording!=='boolean'||typeof data.accessibility!=='boolean')throw Error('CU_PERMISSION_CHECK_FAILED');
+    if(!data||typeof data.screen_recording!=='boolean'||typeof data.accessibility!=='boolean')throw permissionFailure();
     const missing=[];
     if(!data.screen_recording)missing.push('screen_recording');
     if(!data.accessibility)missing.push('accessibility');

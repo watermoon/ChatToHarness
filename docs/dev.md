@@ -1,5 +1,17 @@
 # Development record — Windows computer use
 
+## 2026-10-26 macOS 14 原生 helper 兼容修复（Issue #2，本地验收）
+
+- **构建**：Swift 编译明确使用 `arm64-apple-macosx14.0`、`x86_64-apple-macosx14.0` 和 `MACOSX_DEPLOYMENT_TARGET=14.0`，通过 `lipo` 合并通用 helper。先在临时目录完成双架构编译与检查，再替换资源，失败时保留上次可用 helper。
+- **构建门槛**：新增 `scripts/mac-helper-compatibility.cjs`；编译后、打包前、复制后及最终资源校验都用 `xcrun vtool -show-build` 要求每个切片 minos 为 14.0，并用 `otool -L` 校验经审核的系统框架/Swift 库名单，拒绝 `libswift_stdio.dylib`、未知库和 rpath 依赖。新增 SDK 依赖需要先在 macOS 14 审核，不能直接放宽名单。完整安装包继续为 arm64；现有 Node/Tunnel 固定下载尚不支持 darwin-x64，不能把通用 helper 宣称为通用应用。
+- **诊断**：权限检查与长驻 helper 保留缺失组件、不可执行、架构不匹配、dyld/系统兼容性、超时和其他启动失败代码；stderr 有界读取，仅映射固定错误码，不回显私有路径。IPC、启动时权限弹窗和中英日界面保留具体原因，不再丢成通用 MCP 失败。未修改系统授权机制、Esc/STOP 或既有用户设置。
+- **回归**：首轮完整 577 项为 564 通过、2 失败、11 跳过，两项旧打包夹具使用文本冒充原生文件而被新校验拒绝；改为实际二进制及 `codesign` 签名变更。最终完整 577 项：**566 通过、0 失败、11 跳过**；聚焦 44 项全部通过。新增覆盖不兼容/缺失切片/缺库、真实 helper 双切片权限查询、实际子进程 stderr 排空与失败码、界面与打包签名回归。
+- **14.6.1 真机授权及 GUI**：初始屏幕录制 true、辅助功能 false；显式调用 `request_permissions`，用户在系统设置开启后重新查询，两项均 true。独立源码 helper 及同次包内 helper 最终均通过临时窗口截图、真实点击、输入/退格、滚动、可见轨迹、指针干扰恢复、同屏/跨屏拖动、松键、close_session、全局 Esc（保留目标窗口）。初次启动曾返回 CU_NATIVE_ERROR，第二次跨屏释放状态断言曾失败；未确认根因、未修改产品绕过保护，原始失败记录保留，后续独立运行通过。修饰键快捷键与实体 STOP 按钮点击仍未验收。
+- **独立安装包**：`CTH_DIST_SUBDIR=mac14-compat-20261026 node scripts/build.cjs --dist` 生成 `dist/mac14-compat-20261026/ChatToHarness-0.8.1-macos-arm64.dmg`，267632086 字节，SHA-256 `8611260f267632b5f2901406fb771e8856c5dfa2d8fc955ab003f36961f3cec1`。包内六个相关应用文件与当前源码逐字节一致；包内 helper 两切片 minos 14.0、无 libswift_stdio；应用 `codesign --verify --deep --strict` 和 `hdiutil verify` 通过。隔离配置启动同次 Electron 应用，真实权限 IPC 成功；dyld 缺库夹具经真实 IPC 保留 CU_HELPER_OS_INCOMPATIBLE，控制保持关闭。验收实例与临时窗口均已关闭。
+- **边界**：未安装/覆盖 `/Applications/ChatToHarness.app`，未改现有配置，未创建 worktree、提交、push 或 PR。当前签名为 ad hoc，未公证；原生 Intel、精确 14.0、其他系统、安装后 TCC 身份、远端 CI、真实 ChatGPT 全链路未验收。权限属于实际进程/应用身份，当前授权不保证新安装副本已有权限。
+- **证据**：[结构化报告](evidence/macos14-compatibility-2026-10-26.json)；原始日志位于 `.cache/acceptance/mac14-20261026/`。完整测试命令为 `node --test --test-concurrency=1 tests/*.test.cjs`。真实 GUI 验收显式执行 `node scripts/test-computer-use-macos-interactive.cjs --confirm-real-gui-input`；可用 `CTH_MAC_HELPER` 指定包内 helper 的绝对路径（会在临时窗口发送真实输入）。
+
+
 ## 2026-10-25 代理配置上游 PR 提交前验证
 
 - 上游 `DJ-Huang/ChatToHarness:main` 与本地基线同为 `1cddb2d`；当前分支原地提交，通过 fork 的独立远程分支提出 PR，不使用工作树、不更新 fork/main。PR 标题及说明使用中文。
@@ -754,3 +766,14 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - 移除记住密码复选框、清除密码按钮及相关说明文字。保存密码时始终由系统安全存储加密记住；显隐按钮使用可访问的按钮状态。输入后清空密码可清除已保存凭据；未编辑的空密码仍保留原凭据。
 - 开发版 Electron 隔离 UI/认证 smoke：通过（22 项检查），截图及报告在 .cache/acceptance/proxy-auth-ui-20261025/。检查包含布局、返回、模式同行、选填凭据、密码显隐、加密记住、取消/清空、HTTP/SOCKS5 认证、重启恢复、代理桥清理和三语。
 - 代理专项测试：16 通过、0 失败；完整 npm test：572 项，555 通过、0 失败、17 跳过。renderer、locales 与 smoke 脚本语法检查通过。
+
+
+## 2026-10-26 Cloudflare 托管式多设备 MCP 路由（分支 feat/cloudflare-multi-device-router）
+
+- [x] Mac 本地创建独立功能分支；切换前的 19 项未提交修改完整保留，无 worktree/reset/clean。
+- [x] 新增 cloud-router/src/worker.mjs：MCP JSON-RPC /mcp、Durable Object WebSocket 设备注册、设备认证和显式 device_id 路由。
+- [x] 新增 cloud-router/src/agent.cjs：设备侧连接与受限只读工具调用执行器接口；不自动重放断线中的调用。
+- [x] 新增独立测试与 Cloudflare wrangler.toml 配置及 README；10/10 路由和设备侧单元测试通过（本地模拟）。
+- [ ] 桌面端 Electron 网关真实适配、生命周期及设置 UI 未开发；保留原三个 Tunnel 连接。
+- [ ] 云端真实 Wrangler 部署、ChatGPT 统一插件 OAuth 接入、macOS/Windows 两台真机端到端验收未执行。
+- [ ] 写操作、Shell、Computer Use 未开放；需完成身份认证、设备级授权、审批、可靠状态核验及真实验收。

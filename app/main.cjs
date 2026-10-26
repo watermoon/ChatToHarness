@@ -196,7 +196,7 @@ function registerIPC(){
   bind('choose-directories',async()=>{const result=await dialog.showOpenDialog(window,{title:t('选择允许文件工具访问的目录'),properties:['openDirectory','multiSelections']});return result.canceled?[]:result.filePaths;});
   const mcp=handler=>async(...args)=>{
     if(quitting||installing||!mcpManager||!mcpSettings)throw new Error('MCP_STOPPED');
-    try{return await handler(...args);}catch(error){throw new Error(typeof error.code==='string'?error.code:/^MCP_[A-Z_]+$/.test(error.message)?error.message:'MCP_ACTION_FAILED');}
+    try{return await handler(...args);}catch(error){throw new Error(typeof error.code==='string'?error.code:/^(?:MCP|CU)_[A-Z_]+$/.test(error.message)?error.message:'MCP_ACTION_FAILED');}
   };
   bind('mcp-save-server',mcp(input=>action(async()=>{const server=mcpSettings.save(input);await mcpManager.syncServer(server.id);})));
   bind('mcp-remove-server',mcp(id=>action(()=>mcpManager.remove(id))));
@@ -372,8 +372,8 @@ else{
           show();
           window?.webContents.send('localharness:show-computer-use-permissions');
         }else{computerUse.setEnabled(true);mcpManager.changed();}
-      }).catch(()=>{
-        computerUse.permission={platform,granted:false,missing:[],code:'CU_PERMISSION_CHECK_FAILED'};
+      }).catch(error=>{
+        computerUse.permission={platform,granted:false,missing:[],code:error.code||'CU_PERMISSION_CHECK_FAILED'};
         permissionPromptVisible=true;
         preferences.setComputerUseEnabled(false);
         publish();

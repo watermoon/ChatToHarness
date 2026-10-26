@@ -6,7 +6,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const {MacComputerUse}=require('../app/macos-computer-use.cjs');
-const helper=path.resolve(__dirname,'../resources/computer-use/ChatToHarness.MacComputerUse');
+const helper=path.resolve(process.env.CTH_MAC_HELPER || path.join(__dirname,'../resources/computer-use/ChatToHarness.MacComputerUse'));
 const gui='/tmp/cth-computer-use-gui-fixture';
 const esc='/tmp/cth-computer-use-esc-fixture';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));

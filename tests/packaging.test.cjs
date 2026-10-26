@@ -78,9 +78,12 @@ test('resource verification rejects payload changes and mismatched native platfo
     const pin = versions.forPlatform();
     const files = {};
     for (const relative of [`node/${pin.node.binary}`, `tunnel/${pin.tunnel.binary}`, `node/${pin.node.npm}`,
-      'desktop-commander/node_modules/@wonderwhy-er/desktop-commander/dist/index.js']) {
+      'desktop-commander/node_modules/@wonderwhy-er/desktop-commander/dist/index.js',
+      ...(process.platform === 'darwin' ? ['computer-use/ChatToHarness.MacComputerUse'] : [])]) {
       const file = path.join(folder, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, 'fixture'); files[relative] = crypto.createHash('sha256').update('fixture').digest('hex');
+      const bytes = relative.endsWith('ChatToHarness.MacComputerUse')
+        ? fs.readFileSync(path.resolve(__dirname,'../resources',relative)) : Buffer.from('fixture');
+      fs.writeFileSync(file, bytes); files[relative] = crypto.createHash('sha256').update(bytes).digest('hex');
     }
     const receipt = { platform: `${process.platform}-${process.arch}`, node: versions.node.version,
       tunnel: versions.tunnel.version, desktopCommander: versions.desktopCommander.version,
@@ -106,8 +109,10 @@ test('Mac signed native Computer Use helper is hash-checked before packaging', {
       'computer-use/ChatToHarness.MacComputerUse']) {
       const target = path.join(root, name);
       fs.mkdirSync(path.dirname(target), {recursive: true});
-      fs.writeFileSync(target, 'original fixture');
-      files[name] = crypto.createHash('sha256').update('original fixture').digest('hex');
+      const bytes = name.endsWith('ChatToHarness.MacComputerUse')
+        ? fs.readFileSync(path.resolve(__dirname,'../resources',name)) : Buffer.from('original fixture');
+      fs.writeFileSync(target, bytes);
+      files[name] = crypto.createHash('sha256').update(bytes).digest('hex');
     }
     fs.writeFileSync(path.join(root,'bundle.json'), JSON.stringify({
       platform: process.platform + '-' + process.arch,
@@ -117,7 +122,8 @@ test('Mac signed native Computer Use helper is hash-checked before packaging', {
       files
     }));
     verifyResources(root);
-    fs.writeFileSync(path.join(root,'computer-use/ChatToHarness.MacComputerUse'), 'code-signed fixture');
+    require('node:child_process').execFileSync('/usr/bin/codesign', ['--force','--sign','-','--identifier','cth.test.signed-fixture',
+      path.join(root,'computer-use/ChatToHarness.MacComputerUse')], {stdio:'pipe'});
     assert.throws(() => verifyResources(root), /校验失败/);
     verifyResources(root, {packaged:true});
     fs.writeFileSync(path.join(root,'desktop-commander/node_modules/@wonderwhy-er/desktop-commander/dist/index.js'), 'tampered');

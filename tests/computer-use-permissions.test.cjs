@@ -37,7 +37,7 @@ test('macOS missing helper, command failure or malformed output fails closed',as
  await assert.rejects(()=>new ComputerUsePermissions({platform:'darwin',helper:native}).check(),/CU_HELPER_UNAVAILABLE/);
  fs.writeFileSync(native,'fixture');
  await assert.rejects(()=>new ComputerUsePermissions({platform:'darwin',helper:native,execute(_f,_a,_o,cb){cb(null,'malformed');}}).check(),/CU_PERMISSION_CHECK_FAILED/);
- await assert.rejects(()=>new ComputerUsePermissions({platform:'darwin',helper:native,execute(_f,_a,_o,cb){cb(new Error('timeout'));}}).check(),/CU_PERMISSION_CHECK_FAILED/);
+ await assert.rejects(()=>new ComputerUsePermissions({platform:'darwin',helper:native,execute(_f,_a,_o,cb){cb(new Error('timeout'));}}).check(),/CU_HELPER_START_FAILED/);
 });
 test('Windows does not use macOS TCC or launch any macOS helper',async()=>{
  const permission=new ComputerUsePermissions({platform:'win32',helper:'/does/not/exist',

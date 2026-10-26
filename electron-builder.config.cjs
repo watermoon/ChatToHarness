@@ -11,4 +11,12 @@ if(platform.resources.length) {
   config.extraResources.push({from:'resources/computer-use/node_modules',to:'computer-use/node_modules',filter:['**/*']});
 }
 config.extraResources.push({from:'resources/build-info.json',to:'build-info.json'});
+// Also guard direct electron-builder invocations, before packaging and after
+// copying/signing resources (build.cjs independently verifies the final app).
+if(process.platform==='darwin') {
+  const path=require('node:path');
+  const {verifyMacHelper}=require('./scripts/mac-helper-compatibility.cjs');
+  config.beforePack=async()=>verifyMacHelper(path.join(__dirname,'resources/computer-use/ChatToHarness.MacComputerUse'));
+  config.afterPack=async context=>verifyMacHelper(path.join(context.appOutDir,'ChatToHarness.app/Contents/Resources/computer-use/ChatToHarness.MacComputerUse'));
+}
 module.exports=config;
