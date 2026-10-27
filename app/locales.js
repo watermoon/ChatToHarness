@@ -1368,6 +1368,8 @@
   "需要授权 Cloudflare 才能检测": ["Authorize Cloudflare to check deployment", "デプロイ確認には Cloudflare 認証が必要です"],
   "云端状态无法验证": ["Cloud status cannot be verified", "クラウドの状態を確認できません"],
   "云端已部署，但本机尚未关联": ["Cloud deployed but not linked to this device", "クラウドはデプロイ済みですが、この端末と未連携です"],
+  "云端已部署，本机密钥尚待验证": ["Cloud deployed; this device's owner key is unverified", "クラウドはデプロイ済みですが、この端末の所有者キーは未確認です"],
+  "授权并初始化云端服务": ["Authorize and initialize cloud service", "認証してクラウドサービスを初期化"],
   "确认尚未初始化": ["Confirmed not initialized", "未初期化であることを確認しました"],
   "已确认云端服务未部署": ["Confirmed no cloud service deployment", "クラウドサービスが未デプロイであることを確認しました"],
   "云端连接异常，初始化状态未知": ["Cloud connection failed; initialization status unknown", "クラウド接続に失敗したため初期化状態は不明です"],
