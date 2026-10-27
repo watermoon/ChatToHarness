@@ -53,6 +53,15 @@
         </section>
 
         <section id="panel-connection" class="tab-panel" role="tabpanel" aria-labelledby="nav-connection" hidden>
+          <section class="card connection-card" aria-labelledby="cloud-setup-heading">
+  <div class="card-header"><div><h2 id="cloud-setup-heading">初始化云端服务</h2><p>不需要终端、Node.js、Wrangler 或 Computer Use；首次授权 Cloudflare 后自动部署。</p></div></div>
+  <div class="field-grid">
+    <div class="field"><label for="cloud-subdomain">Cloudflare workers.dev 子域名</label><input id="cloud-subdomain" type="text" placeholder="例如：watermoon3322" autocomplete="off" spellcheck="false" /></div>
+    <div class="field"><label for="cloud-existing-kv">已有 OAuth KV ID（可选）</label><input id="cloud-existing-kv" type="text" placeholder="留空则自动创建或查找" autocomplete="off" spellcheck="false" /></div>
+  </div>
+  <div class="hero-actions"><button id="cloud-setup-start" class="button secondary" type="button">初始化云端服务</button><button id="cloud-setup-copy-key" class="button secondary" type="button" hidden>复制我的授权密钥</button><span id="cloud-setup-status" role="status" aria-live="polite">尚未初始化</span></div>
+  <p class="field-hint">首次使用时 Cloudflare 可能打开浏览器请求账户授权；授权密钥只保存在系统加密存储，绝不提交到仓库。</p>
+</section>
           <section class="card connection-card" aria-labelledby="cloud-pair-heading">
             <div class="card-header"><div><h2 id="cloud-pair-heading">多设备连接 · 一次配对</h2><p>只需配对一次，重启后自动连接。原有 Tunnel 配置不受影响。</p></div></div>
             <p class="field-hint">在 ChatGPT 的统一 ChatToHarness 插件中调用 create_pairing_code，复制返回的配对码到这里。</p>

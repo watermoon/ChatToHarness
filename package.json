@@ -84,6 +84,23 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "cloud-router",
+        "to": "cloud-router",
+        "filter": [
+          "src/**/*",
+          "auth-server/index.mjs",
+          "package.json",
+          "package-lock.json"
+        ]
+      },
+      {
+        "from": "cloud-router/node_modules",
+        "to": "cloud-router/node_modules",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {

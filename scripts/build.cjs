@@ -69,6 +69,14 @@ function shouldVerifyMacSignature(platform, signed) {
 function main() {
   versions.forPlatform();
   const config = signingConfig(process.platform, process.env);
+  // Cloudflare CLI is bundled into the product, never required on the end-user's PATH.
+  // Builder runs this on each target OS so Wrangler's native dependencies match the target.
+  const cloudCli=path.join(root,'cloud-router','node_modules','wrangler','bin','wrangler.js');
+  if(!fs.existsSync(cloudCli)){
+    const npm=process.platform==='win32'?'npm.cmd':'npm';
+    const prepared=spawnSync(npm,['ci','--prefix','cloud-router'],{cwd:root,stdio:'inherit',windowsHide:true});
+    if(prepared.error||prepared.status!==0)throw new Error('Cloudflare bootstrap dependency bundle could not be prepared.');
+  }
   run(path.join(__dirname, 'prepare-resources.cjs'));
   verifyResources(path.join(root, 'resources'));
   require('../app/build-identity.cjs').writeBuildInfo(root, path.join(root, 'resources'));
@@ -87,6 +95,13 @@ function main() {
   if (!fs.existsSync(executable)) throw new Error('应用打包未生成预期入口。');
   const resources = process.platform === 'darwin' ? path.join(application, 'Contents', 'Resources') : path.join(application, 'resources');
   verifyResources(resources, { packaged: true, signed: config.signed });
+  // The cloud bootstrap must work without a pre-installed Node.js or Wrangler.
+  for(const file of ['cloud-router/node_modules/wrangler/bin/wrangler.js',
+    'cloud-router/node_modules/@cloudflare/workers-oauth-provider/package.json',
+    'cloud-router/auth-server/index.mjs','cloud-router/src/secure-worker.mjs']){
+    if(!fs.existsSync(path.join(resources,file)))throw new Error('Cloud bootstrap resource missing: '+file);
+  }
+
   if (shouldVerifyMacSignature(process.platform, config.signed)) {
     const signed = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', application], { stdio: 'inherit' });
     if (signed.error) throw signed.error;

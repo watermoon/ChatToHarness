@@ -836,3 +836,13 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] 真实公网：OAuth Discovery 200、PKCE S256、MCP Resource Metadata 200、无 Token MCP 401（含 OAuth challenge）、错误 Owner Key 403、正确 Owner Key 授权码 302、Token 换取成功、带 Token 调用 MCP `tools/list` 成功。
 - [ ] ChatGPT 插件实际安装授权、`list_devices`/`create_pairing_code` 对 Durable Object 的在线调用、Mac/Windows 真机一次性配对和三设备并发均待验收，不能据此宣称全部迁移完成。
 - [ ] 设备撤销、重新配对、生产限流和远程高级工具权限仍为后续任务；既有三个 Tunnel 保留正常使用。
+
+## 2026-10-27 Cloudflare standalone bootstrap (without MCP or Computer Use)
+
+- [x] 桌面端连接配置新增「初始化云端服务」，在主进程独立执行云端初始化。
+- [x] 使用内置 Node 和 Wrangler 登录、创建或复用 OAuth KV、部署两 Worker、写入 OWNER_AUTH_KEY、验收 OAuth discovery=200 和匿名 MCP=401。
+- [x] 主进程从 CSPRNG 生成 256-bit 所有者密钥，通过 Electron safeStorage 加密保存；仅用户按明确按钮时复制到剪贴板，不回显到状态/日志/版本库。
+- [x] 不依赖 MCP、Computer Use、外部 Node 或终端；旧 Tunnel 不做切换；远程工具只允许 get_harness_status。
+- [x] Mac 安装包本地构建和动态配置双 Worker dry-run 通过；CloudBootstrap 单测通过。
+- [ ] 真实 Cloudflare 生产部署和 ChatGPT OAuth、多设备联调尚未通过；不得宣称生产已上线。
+- [ ] Windows 安装包及真实 Windows 初始化仍待复验；Bundled Wrangler 体积需后续优化。

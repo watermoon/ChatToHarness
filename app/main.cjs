@@ -29,7 +29,7 @@ const home=storageDirectory({platform,userHome:os.homedir(),appData:process.env.
 app.setName(testMode?'ChatToHarness Acceptance '+require('node:crypto').createHash('sha256').update(home).digest('hex').slice(0,12):platform==='darwin'?'LocalHarness':product);
 app.setPath('userData',home);
 let history,diagnosticWriter,diagnosticError;
-let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,cloudRouter,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
+let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,cloudRouter,cloudBootstrap,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
 const indexURL=pathToFileURL(path.join(__dirname,'index.html')).href;
 const resources=(testMode&&process.env.LOCALHARNESS_RESOURCES)|| (app.isPackaged?process.resourcesPath:(process.env.LOCALHARNESS_RESOURCES||path.join(__dirname,'..','resources')));
 const links=Object.freeze({
@@ -55,7 +55,7 @@ function executionToLog(row){
     state:row.state,delivery:row.delivery,error_code:row.error_code||undefined,
     execution_state:row.execution_state,recovery_kind:row.recovery_kind,exit_code:Number.isInteger(row.exit_code)?row.exit_code:undefined});
 }
-function state(){return {diagnostics:diagnosticWriter?.status()||{state:diagnosticError?'unavailable':'starting',error_code:diagnosticError},settings:settings?settings.public():{tunnelId:'',directories:[],autoConnect:true,useSystemProxy:false,autoProjectContext:true,keySaved:false},runtime:fatal?{state:'failed',error:fatal,localReady:false,toolsCount:0}:runtime?.status()||{state:'unconfigured',error:'',localReady:false,toolsCount:0},mcp:{...(mcpManager?.status()||{servers:[],approvals:[],toolsVersion:0,allowAllTools:false}),computerUse:{...(computerUse?.status()||{enabled:false,available:false,registered:false,platform}),permissionPromptVisible}},...(cloudRouter?{cloudRouter:cloudRouter.status()}:{}),versions,updates:updater?.status()||{current:versions.app,phase:'idle',automatic:preferences?.autoCheckUpdates!==false},actionEpoch,system:{platform,locale},testMode};}
+function state(){return {diagnostics:diagnosticWriter?.status()||{state:diagnosticError?'unavailable':'starting',error_code:diagnosticError},settings:settings?settings.public():{tunnelId:'',directories:[],autoConnect:true,useSystemProxy:false,autoProjectContext:true,keySaved:false},runtime:fatal?{state:'failed',error:fatal,localReady:false,toolsCount:0}:runtime?.status()||{state:'unconfigured',error:'',localReady:false,toolsCount:0},mcp:{...(mcpManager?.status()||{servers:[],approvals:[],toolsVersion:0,allowAllTools:false}),computerUse:{...(computerUse?.status()||{enabled:false,available:false,registered:false,platform}),permissionPromptVisible}},...(cloudRouter?{cloudRouter:cloudRouter.status()}:{}),...(cloudBootstrap?{cloudBootstrap:cloudBootstrap.status()}:{}),versions,updates:updater?.status()||{current:versions.app,phase:'idle',automatic:preferences?.autoCheckUpdates!==false},actionEpoch,system:{platform,locale},testMode};}
 function publish(){const value=state();if(window&&!window.isDestroyed())window.webContents.send('localharness:state',value);refreshTray();}
 function show(){if(quitting)return;if(!window||window.isDestroyed())createWindow();if(window.isMinimized())window.restore();window.show();window.focus();}
 function restart(){
@@ -274,6 +274,8 @@ function registerIPC(){
   // Confirmations must not queue behind a connection check or another pending
   // management action. They can only resolve an already captured request ID.
   bind('mcp-resolve-approval',mcp(input=>{mcpManager.approve(input);return state();}));
+  bind('cloud-bootstrap-start',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.init(input);});
+  bind('cloud-bootstrap-copy-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.copyOwnerKey(require('electron').clipboard);});
   bind('cloud-router-pair',input=>action(async()=>{
     if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');
     await cloudRouter.pair(input);
@@ -364,6 +366,9 @@ else{
       const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
       cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,
         pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish});
+      const {CloudBootstrap}=require('./cloud-bootstrap.cjs');
+      cloudBootstrap=new CloudBootstrap({home,safeStorage,nodePath:runtime.paths.node,
+        sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),onChange:publish});
       if(!testMode)cloudRouter.startStored();
 
       mcpManager.on('state',()=>{const toolsCount=mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});

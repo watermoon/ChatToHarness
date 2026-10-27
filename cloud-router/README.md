@@ -13,3 +13,9 @@ MCP tools: `create_pairing_code`, `list_devices`, `call_device_tool`. Remotely p
 Setup: [P3-OAUTH.md](P3-OAUTH.md). One-time pairing: [PAIRING.md](PAIRING.md).
 
 Check code with `npm test` (repo root) and `npm run check` (`cloud-router/`). A successful dry-run does **not** mean a Worker was deployed or ChatGPT is authenticated.
+
+## Desktop first-run cloud initialization
+
+The desktop Connection settings has an Initialize Cloud Service action. Enter your account workers.dev subdomain (and optionally an existing OAuth KV namespace ID). The client uses bundled Node.js and Wrangler, opens the Cloudflare browser login only when required, provisions both Workers and KV, sets a 256-bit owner key as a Worker Secret, and verifies OAuth discovery and rejection of anonymous MCP access.
+
+The owner key is OS-encrypted using Electron safeStorage. An explicit user action copies the key for ChatGPT OAuth authorization. The existing Tunnel remains untouched; this setup does not need MCP, Computer Use, a terminal or host-installed Wrangler. Runtime-generated configuration is placed under app userData, never Git. Production E2E remains a separate acceptance gate.
