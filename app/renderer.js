@@ -18,7 +18,7 @@
   const cloudSetupStart=byId('cloud-setup-start');
   const cloudSetupCopyKey=byId('cloud-setup-copy-key');
   const cloudSetupStatus=byId('cloud-setup-status');
-  const cloudPhaseLabels={idle:'尚未初始化',checking_account:'验证 Cloudflare 账户',
+  const cloudPhaseLabels={idle:'尚未初始化',checking:'正在检测云端服务',checking_account:'验证 Cloudflare 账户',
     authorize_browser:'请在浏览器批准 Cloudflare 授权',discovering:'自动识别账户和 KV',
     choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',selection_ready:'配置已识别',
     configuring:'准备部署配置',creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
