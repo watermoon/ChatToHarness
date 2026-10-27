@@ -1,5 +1,14 @@
 # Development record — Windows computer use
 
+
+## 2026-10-27 Cloudflare 多实例状态自动检查和连接页重排
+
+- **位置**：连接配置依次显示「安全通道配置」→「多实例远端服务」→「多设备连接」。已有 Tunnel、代理及设备配对字段不改动。新增结构回归 `tests/cloud-ui-layout.test.cjs`。
+- **自动发现**：页面加载自动经 preload/IPC 调用 cloud-bootstrap-discover。已有 Wrangler 授权时发现账户、workers.dev 子域名、OAuth KV；对已选择账户读取 Cloudflare Worker Scripts 清单。只有已认证清单证明两个脚本均不存在时才显示「已确认未部署」；没有授权、清单权限不足、超时和单纯公开 HTTP 404 均不能证明未初始化。远端另行只读检查 OAuth 元数据、Router /health 和未授权 MCP 401；本地 complete 记录不能代替实时检查。
+- **安全边界**：已部署且本机无 owner key 时禁用初始化；本机保存但从未完成验证的 owner key 不直接提升为 ready；部分部署只有持有本机现存密钥时才允许尝试修复。未知状态不得执行覆盖部署，且不会在页面加载时自动弹出账户授权或部署。Worker 查询 token 不进入 renderer 状态和日志。
+- **回归用例**：扩充 `tests/cloud-bootstrap.test.cjs` 与 `tests/cloudflare-discovery.test.cjs`，覆盖已部署/未部署/不完整/网络不可达、缺失或尚未验证的 owner key、Cloudflare 清单读取失败，以及安全通道版面与 discovery IPC。
+- **验收状态**：改动由 GitHub 仓库接口直接提交到 `feat/cloudflare-multi-device-router`；HomeWinHarness 在本轮尝试中持续返回 `MCP SSE probe returned 429 from openai.org`。**尚未执行 Node 测试、真实 Electron/UI/Windows 端或实际 Cloudflare 端到端验收，不得标记通过**。恢复连接后执行 `node --test tests/cloud-bootstrap.test.cjs tests/cloudflare-discovery.test.cjs tests/cloud-ui-layout.test.cjs`，再执行 `node --test --test-concurrency=1 tests/*.test.cjs`；验证真实云端之前不得生成正式发布结论。未创建 worktree、安装包或 PR，未更改其他设备工作区。
+
 ## 2026-10-26 macOS 14 原生 helper 兼容修复（Issue #2，本地验收）
 
 - **构建**：Swift 编译明确使用 `arm64-apple-macosx14.0`、`x86_64-apple-macosx14.0` 和 `MACOSX_DEPLOYMENT_TARGET=14.0`，通过 `lipo` 合并通用 helper。先在临时目录完成双架构编译与检查，再替换资源，失败时保留上次可用 helper。
