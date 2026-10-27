@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {headersFromWrangler,oauthNamespaces,discoverCloudflare}=require('../app/cloudflare-discovery.cjs');
+const {headersFromWrangler,oauthNamespaces,discoverCloudflare,inspectWorkerScripts}=require('../app/cloudflare-discovery.cjs');
 const TOKEN='a'.repeat(64);
 const output=JSON.stringify({type:'oauth',token:TOKEN});
 const ONE='b'.repeat(32),TWO='c'.repeat(32),KV1='d'.repeat(32),KV2='e'.repeat(32);
@@ -74,4 +74,29 @@ test('Cloudflare discovery refuses failed responses and never invents a subdomai
  const fixture=apiFixture({domains:{[ONE]:null}});
  await assert.rejects(()=>discoverCloudflare({fetcher:fixture.fetcher,tokenOutput:output}),
   /CLOUD_SUBDOMAIN_NOT_CONFIGURED/);
+});
+
+test('authenticated Workers inventory distinguishes absence, partial deployment and complete deployment',async()=>{
+ const accountId=ONE, tokenOutput=output;
+ const present=async(_url,opts)=>{
+   assert.equal(opts.headers.Authorization,'Bearer '+TOKEN);
+   return {status:200,json:async()=>({success:true,result:
+     [{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]})};
+ };
+ assert.deepEqual(await inspectWorkerScripts({fetcher:present,tokenOutput,accountId}),
+   {auth:true,router:true});
+ const empty=async()=>({status:200,json:async()=>({success:true,result:[]})});
+ assert.deepEqual(await inspectWorkerScripts({fetcher:empty,tokenOutput,accountId}),
+   {auth:false,router:false});
+ const onlyAuth=async()=>({status:200,json:async()=>({
+   success:true,result:[{id:'chattoharness-auth'}]})});
+ assert.deepEqual(await inspectWorkerScripts({fetcher:onlyAuth,tokenOutput,accountId}),
+   {auth:true,router:false});
+});
+test('incomplete Workers inventory or permission failure can never prove absence',async()=>{
+ await assert.rejects(()=>inspectWorkerScripts({accountId:ONE,tokenOutput:output,
+   fetcher:async()=>({status:403})}),/CLOUD_API_UNAVAILABLE/);
+ await assert.rejects(()=>inspectWorkerScripts({accountId:ONE,tokenOutput:output,
+   fetcher:async()=>({status:200,json:async()=>({success:true,result:[],
+     result_info:{total_pages:2}})})}),/CLOUD_WORKER_LIST_INCOMPLETE/);
 });
