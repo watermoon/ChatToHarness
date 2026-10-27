@@ -1,5 +1,5 @@
 'use strict';
-const {discoverCloudflare}=require('./cloudflare-discovery.cjs');
+const {discoverCloudflare,inspectWorkerScripts}=require('./cloudflare-discovery.cjs');
 // Desktop-only first-run bootstrap. Does not depend on MCP, Computer Use or shell access.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
@@ -60,10 +60,10 @@ class CloudBootstrap {
   this.dir=path.join(home,'cloudflare-bootstrap');
   this.file=path.join(this.dir,'credentials.json');
   this.phase='idle';this.error='';this.busy=false;
-  this.remote='unchecked';this.remoteCheckedAt=null;
+  this.remote='unchecked';this.remoteCheckedAt=null;this.workerInventory=null;
   this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
   this.selectedKvId='';
-  this.record=this.read();if(this.record?.complete)this.phase='ready';
+  this.record=this.read();if(this.record?.complete)this.phase='checking';
  }
  read(){
   try{const s=fs.lstatSync(this.file);
@@ -81,7 +81,7 @@ class CloudBootstrap {
   kvId:this.selectedKvId||this.record?.kvId,
   mcp_url:this.record?urls(this.record.subdomain).mcp:'',
   remote:this.remote,remoteCheckedAt:this.remoteCheckedAt,
-  hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready' && this.remote!=='partial' && this.remote!=='not_deployed' && this.remote!=='unreachable'};}
+  hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready' && this.remote==='deployed'};}
  phaseSet(p,e=''){this.phase=p;this.error=e;this.onChange();}
  save(){fs.mkdirSync(this.dir,{recursive:true,mode:0o700});atomic(this.file,this.record);}
  ownerKey(){
@@ -106,21 +106,30 @@ class CloudBootstrap {
   atomic(b,config(this.sourceDir,s,kv,'router',accountId));
   return {auth:a,router:b};
  }
- async checkRemote(s) {
+ // A public 404 cannot establish that a worker was never deployed.
+ // Only the authenticated Cloudflare script inventory can prove absence.
+ async checkRemote(s,inventory=this.workerInventory) {
    if(!SUB.test(s)){this.remote='unchecked';return this.remote;}
+   this.remote='checking';this.onChange();
    const {auth,mcp}=urls(s);
-   try {
+   try{
      const [metadata,health,unauthorized]=await Promise.all([
        this.fetcher(auth+'/.well-known/oauth-authorization-server',
          {signal:AbortSignal.timeout(12000)}),
        this.fetcher(new URL('/health',mcp).href,{signal:AbortSignal.timeout(12000)}),
        this.fetcher(mcp,{method:'GET',signal:AbortSignal.timeout(12000)})
      ]);
-     this.remote=metadata.status===200&&health.status===200&&unauthorized.status===401?
-       'deployed':metadata.status===404&&health.status===404?'not_deployed':'partial';
+     const authOk=metadata?.status===200;
+     const routerOk=health?.status===200&&unauthorized?.status===401;
+     if(authOk&&routerOk&&(!inventory||(inventory.auth&&inventory.router)))
+       this.remote='deployed';
+     else if(inventory&&!inventory.auth&&!inventory.router&&!authOk&&!routerOk)
+       this.remote='not_deployed';
+     else if(authOk||routerOk||(inventory&&(inventory.auth!==inventory.router)))
+       this.remote='partial';
+     else this.remote='unreachable';
    }catch{this.remote='unreachable';}
-   this.remoteCheckedAt=Date.now();
-   this.onChange();
+   this.remoteCheckedAt=Date.now();this.onChange();
    return this.remote;
  }
  async findOptions(input={},allowLogin=false){
@@ -142,18 +151,40 @@ class CloudBootstrap {
    this.discoveredAccountId=found.accountId||'';
    this.discoveredSubdomain=found.subdomain||'';
    this.selectedKvId=found.kvId||'';
-   if(found.subdomain)await this.checkRemote(found.subdomain);
+   this.workerInventory=null;
+   if(!found.needs){
+     try{
+       this.workerInventory=await inspectWorkerScripts({
+         fetcher:this.fetcher,tokenOutput:token,accountId:found.accountId
+       });
+     }catch{/* Missing Cloudflare permission or network access != absent. */}
+     await this.checkRemote(found.subdomain,this.workerInventory);
+   }else this.remote='unchecked';
    this.phaseSet(found.needs==='account'?'choose_account':
-     found.needs==='kv'?'choose_kv':this.record?.complete?
-       (this.remote==='deployed'?'ready':'degraded'):'selection_ready');
+     found.needs==='kv'?'choose_kv':
+     this.remote==='deployed'?
+       (this.record?.encryptedKey?'ready':'already_deployed'):
+     this.remote==='not_deployed'?'not_initialized':
+     this.remote==='partial'?'degraded':'verification_unavailable');
    return found;
  }
  async preview(input={}){
    if(this.busy)return this.status();
    this.busy=true;this.onChange();
-   try{if(this.record?.subdomain)await this.checkRemote(this.record.subdomain);
-     await this.findOptions(input,false);}
-   catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_DISCOVERY_FAILED').split(':')[0]);}
+   try{await this.findOptions(input,false);}
+   catch(e){
+     const code=String(e?.message||'CLOUD_DISCOVERY_FAILED').split(':')[0];
+     if(this.record?.subdomain){
+       const remote=await this.checkRemote(this.record.subdomain,null);
+       if(remote==='deployed'){
+         this.phaseSet(this.record.encryptedKey?'ready':'already_deployed');
+       }else this.phaseSet(code==='CLOUD_LOGIN_REQUIRED'?
+         'authorization_required':'verification_unavailable',
+         code==='CLOUD_LOGIN_REQUIRED'?'':code);
+     }else this.phaseSet(code==='CLOUD_LOGIN_REQUIRED'?
+       'authorization_required':'verification_unavailable',
+       code==='CLOUD_LOGIN_REQUIRED'?'':code);
+   }
    finally{this.busy=false;this.onChange();}
    return this.status();
  }
@@ -168,13 +199,17 @@ class CloudBootstrap {
      return this.status();
    }
    const s=subdomain(found.subdomain),accountId=found.accountId;
-   if(this.remote==='deployed' && !this.record?.encryptedKey)
-     throw Error('CLOUD_ALREADY_DEPLOYED_OWNER_KEY_MISSING');
-   if(this.remote==='deployed' && this.record?.complete){
-     this.phaseSet('ready');
-     return this.status();
-   }
    if(this.record&&this.record.subdomain!==s)throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
+   if(this.remote==='deployed'){
+     if(!this.record?.encryptedKey)
+       throw Error('CLOUD_ALREADY_DEPLOYED_OWNER_KEY_MISSING');
+     if(!this.record.complete){this.record.complete=true;this.save();}
+     this.phaseSet('ready');return this.status();
+   }
+   if(this.remote==='partial'&&!this.record?.encryptedKey)
+     throw Error('CLOUD_PARTIAL_DEPLOYMENT_OWNER_KEY_MISSING');
+   if(!['not_deployed','partial'].includes(this.remote))
+     throw Error('CLOUD_REMOTE_STATE_UNKNOWN');
    let kv=found.kvId;
    this.phaseSet('configuring');
    let files=this.configs(s,kv,accountId);
@@ -199,12 +234,8 @@ class CloudBootstrap {
    this.phaseSet('deploying_router');
    await this.cli(['deploy','--config',files.router]);
    this.phaseSet('verifying');
-   const u=urls(s);
-   const [metadata,protectedMcp]=await Promise.all([
-    this.fetcher(u.auth+'/.well-known/oauth-authorization-server',{signal:AbortSignal.timeout(12000)}),
-    this.fetcher(u.mcp,{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(12000)})
-   ]);
-   if(metadata.status!==200||protectedMcp.status!==401)throw Error('CLOUD_REMOTE_VERIFICATION_FAILED');
+   if(await this.checkRemote(s,null)!=='deployed')
+     throw Error('CLOUD_REMOTE_VERIFICATION_FAILED');
    this.record.complete=true;this.save();this.phaseSet('ready');
   }catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_SETUP_FAILED').split(':')[0].slice(0,100));}
   finally{this.busy=false;this.onChange();}
