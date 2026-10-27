@@ -1,41 +1,28 @@
-# P3 — OAuth 2.1 for ChatToHarness Cloud Router
+# Cloudflare Access + OAuth 2.1
 
-**Code and local verification are in place. Not production deployed.** Keep the existing three Secure MCP Tunnels in service until a real ChatGPT authorization and multi-device E2E acceptance passes.
+This branch no longer needs a GitHub OAuth App or a GitHub sign-in. The human authorizes the single ChatGPT MCP connector through **Cloudflare Access**; devices authenticate separately using an automatically issued device secret after one-time pairing.
 
-## Architecture
+## Identity flow
 
-- `chattoharness-auth`: Cloudflare Workers OAuth Provider **1.2.4**, GitHub OAuth login, explicit consent, PKCE S256 + CIMD/DCR client handling, KV-backed OAuth codes/grants/tokens.
-- `chattoharness-cloud-router`: resource Worker; the **only** public MCP URL is `https://<mcp-domain>/mcp`. `OAuthResourceServer` verifies token audience, scope and expiration through a private `AUTH_SERVER.validateToken` service binding. A second check verifies the GitHub user ID against the allowed IDs and authenticated subject.
-- Device connections to `wss://<mcp-domain>/agent` use *separate unique device tokens*, unaffected by OAuth. Those tokens are not MCP bearer credentials and never grant end-user access.
-- The internal `authorizedWorker` dispatcher has **no public Worker default entry**. Unauthenticated calls cannot reach tools, and the old static `MCP_BEARER_TOKEN` approach has been removed from the deployed Worker.
-- Device operations remain capped at read-only `get_harness_status` both in the Worker allowlist and local Agent. Writing, terminal and Computer Use are not remotely enabled.
+1. Configure one HTTPS OAuth authorization Worker (`chattoharness-auth`) and one HTTPS resource Worker (`chattoharness-cloud-router`).
+2. Set up Cloudflare Zero Trust with an **Access application scoped to the authorization worker's `/authorize` path only**. Choose "Cloudflare account" membership as the IdP and restrict the policy to the intended member(s).
+3. Cloudflare supplies verified `ctx.access.getIdentity()` to the authorization Worker. The Worker also enforces `ACCESS_ALLOWED_EMAILS` (case-insensitive exact match; empty denies everyone).
+4. The authorization Worker uses `@cloudflare/workers-oauth-provider` 1.x for consent, PKCE S256, CIMD/DCR, access tokens and revocation. Discovery, `/oauth/token` and registration must **not** be Access-protected, as non-browser clients need them.
+5. The MCP resource Worker validates bearer tokens against the auth Worker using Service Binding and re-checks the subject/email allowlist. **No plain GitHub, Cloudflare, or ChatGPT browser session is trusted by the resource endpoint.**
+6. A ChatGPT user runs `create_pairing_code` from the authenticated MCP connector, then pastes the one-use code into the new desktop pairing panel. Device token is encrypted with OS `safeStorage` and reused on restart.
 
-## Deployment prerequisites
+## Cloudflare configuration needed before deployment
 
-1. Own a Cloudflare account and two HTTPS custom hostnames, e.g. `auth.your-domain` and `mcp.your-domain`. Set them identically across both Workers' `OAUTH_ISSUER` and `MCP_RESOURCE_URL` variables. **Do not use the example.invalid defaults.** Both Workers have `workers_dev = false`: a custom domain/route needs explicit configuration before deployment.
-2. Create `OAUTH_KV` with Wrangler, copy its actual namespace ID into `auth-server/wrangler.toml`. Keep the `global_fetch_strictly_public` flag for CIMD document fetching.
-3. Create a GitHub **OAuth App**. Configure its Authorization Callback URL to `https://<auth-domain>/callback`. Set `GITHUB_CLIENT_ID` on the auth Worker, and write the client secret with `wrangler secret put GITHUB_CLIENT_SECRET -c auth-server/wrangler.toml`. Never commit the secret or put it in an issue/ChatGPT conversation.
-4. Determine the *numeric GitHub user ID* of each authorized operator. Configure `GITHUB_ALLOWED_USER_IDS` (comma-delimited) **identically on both Workers**. Empty allowlists reject everybody; arbitrary authenticated GitHub users are not permitted.
-5. Provision a distinct device token (minimum 24 unpredictable characters) for every local ChatToHarness installation. Save `DEVICE_TOKENS` as a Cloudflare secret in the resource Worker, mapping device IDs to their tokens. Do not reuse the GitHub OAuth secret.
-6. Deploy the auth Worker first, then the resource Worker so the Service Binding can resolve `chattoharness-auth`. Test metadata and login before switching any device over.
+- Set `OAUTH_ISSUER` and `MCP_RESOURCE_URL` to real matching HTTPS domain URLs in **both** wrangler files.
+- Create OAuth KV and configure `auth-server/wrangler.toml` with its namespace ID.
+- Configure `ACCESS_ALLOWED_EMAILS` to the intended authorized account email(s) in **both** workers. Never use a wildcard or leave empty expecting users to pass.
+- Restrict Cloudflare Access to the authorization `/authorize` path. Do **not** enable Worker-wide Access for the auth or MCP Worker, or you will block OAuth clients and device WebSockets.
+- Deploy the auth Worker first; then deploy the resource Worker with an `AUTH_SERVER` Service Binding.
+- In ChatGPT, install **one** OAuth-protected remote MCP connector at `https://<mcp-host>/mcp`; confirm 401 challenge + `WWW-Authenticate` and metadata, then complete the Access login/consent.
+- Device operations currently remain limited to `get_harness_status` with empty arguments. Shell, file editing, Git writes and Computer Use are not yet permitted through the cloud route.
 
-## Verification
+## Verification limitations
 
-Run `npm ci` inside `cloud-router/` and `npm run check` for both Worker dry-runs; run repository `npm test`. Local Workerd can use *loopback-only* HTTP resource URLs through `--var MCP_RESOURCE_URL:http://127.0.0.1:<port>/mcp`, but production HTTP hosts are rejected.
+Local unit tests and Wrangler dry-run do not prove online Cloudflare Access identity, OAuth token exchange, real WebSockets, or ChatGPT app authorization. Such checks require the actual Cloudflare account/domain, and should be completed in a separate deployment acceptance report. Keep all three existing Secure MCP Tunnel plugins until this passes.
 
-HTTP smoke tests, using the **real configured domain**:
-
-- `GET https://<auth-domain>/.well-known/oauth-authorization-server`: discovery includes `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `code_challenge_methods_supported` containing `S256`, and CIMD support.
-- `GET https://<mcp-domain>/.well-known/oauth-protected-resource/mcp`: RFC 9728 metadata advertises issuer and `mcp:read`.
-- Unauthenticated `POST https://<mcp-domain>/mcp`: **401**, including `WWW-Authenticate` with `resource_metadata`. **Do not accept a 404 or a 200 here**.
-- ChatGPT custom MCP connection: choose **OAuth / CIMD** (DCR available as fallback), authorize via the GitHub login and consent page; verify `list_devices` and `get_harness_status` on the explicitly selected device. Incorrect subject, missing scope, expired token, wrong audience, and revoked grants must be rejected.
-- Verify an offline device does not silently fail over. Any ambiguous execution state does not auto-retry; local Computer Use permissions, STOP/Esc, and app approvals remain independent.
-
-## Current acceptance boundary
-
-- Local Workerd produced `401 Unauthorized` with a Bearer challenge for an unauthenticated MCP call, and RFC 9728 protected resource metadata returned HTTP 200.
-- Local auth Worker produced RFC 8414 metadata, while `/authorize` without OAuth parameters was rejected.
-- **Not tested:** actual GitHub OAuth callback and consent-cookie flow, real token exchange, token refresh/revocation, remote Cloudflare deployment, a genuine ChatGPT client, or two physical devices.
-- GitHub OAuth authentication only identifies an allowed human. It does not authorize a particular device or file operation; those are governed by additional router and local permission checks. This release deliberately exposes only read-only health/status.
-
-Official APIs: https://github.com/cloudflare/workers-oauth-provider/tree/main/examples/split-workers and https://developers.openai.com/plugins/build/auth
+Details of pairing: [PAIRING.md](PAIRING.md).

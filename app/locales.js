@@ -1317,6 +1317,21 @@
   '用户名（选填）：': ['Username (optional):', 'ユーザー名（任意）：'],
   '密码：': ['Password:', 'パスワード：'],
   '隐藏密码': ['Hide password', 'パスワードを隠す'],
+  "尚未配对": ["Not paired", "未ペアリング"],
+  "正在自动重连": ["Reconnecting automatically", "自動再接続中"],
+  "连接失败": ["Connection failed", "接続に失敗しました"],
+  "已连接：": ["Connected:", "接続済み："],
+  "等待配对": ["Waiting for pairing", "ペアリング待機中"],
+  "正在验证一次性配对码…": ["Verifying one-time pairing code…", "ワンタイムペアリングコードを検証中…"],
+  "配对失败：": ["Pairing failed:", "ペアリング失敗："],
+  "请核对服务地址和配对码": ["Check the service URL and pairing code", "サービス URL とペアリングコードを確認してください"],
+  "多设备连接 · 一次配对": ["Multi-device connection · Pair once", "複数デバイス接続・一度だけペアリング"],
+  "配对当前设备": ["Pair this device", "このデバイスをペアリング"],
+  "统一 MCP 地址": ["Shared MCP URL", "共通 MCP URL"],
+  "一次性配对码（5 分钟有效）": ["One-time pairing code (valid for 5 minutes)", "ワンタイムペアリングコード（有効期間5分）"],
+  "只需配对一次，重启后自动连接。原有 Tunnel 配置不受影响。": ["Pair once to reconnect automatically after restart. Existing Tunnel settings are unchanged.", "一度ペアリングすれば、再起動後も自動接続します。既存の Tunnel 設定は変更されません。"],
+  "在 ChatGPT 的统一 ChatToHarness 插件中调用 create_pairing_code，复制返回的配对码到这里。": ["Call create_pairing_code in the shared ChatToHarness connector in ChatGPT, then paste the code here.", "ChatGPT の共通 ChatToHarness コネクタで create_pairing_code を呼び出し、返されたコードをここに貼り付けてください。"],
+  "从 ChatGPT 复制配对码": ["Paste the pairing code from ChatGPT", "ChatGPT のペアリングコードを貼り付け"],
 };
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else root.CTHMessages = Object.freeze(messages);

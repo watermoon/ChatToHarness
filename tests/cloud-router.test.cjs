@@ -5,7 +5,6 @@ const {resolve} = require('node:path');
 const {pathToFileURL} = require('node:url');
 const workerUrl = pathToFileURL(resolve(__dirname, '../cloud-router/src/worker.mjs')).href;
 const TOKEN = 'abcdefghij1234567890abcdefghijklmnop';
-const DEVICE_TOKEN = 'device-abcdefghij1234567890abcdefghij';
 class Socket {
   constructor() { this.readyState = 1; this.messages = []; }
   serializeAttachment(v) { this.attachment = v; }
@@ -16,13 +15,25 @@ class Socket {
 async function fixture() {
   const {DeviceHub, authorizedWorker: worker} = await import(workerUrl);
   const sockets = [];
-  const env = {DEVICE_TOKENS: JSON.stringify({moon: DEVICE_TOKEN, mac: DEVICE_TOKEN}),
-    MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
-  const hub = new DeviceHub({getWebSockets: () => sockets, acceptWebSocket: ws => sockets.push(ws)}, env);
+  const storage={items:new Map(),get(k){return Promise.resolve(this.items.get(k));},
+    put(k,v){this.items.set(k,v);return Promise.resolve();},delete(k){this.items.delete(k);return Promise.resolve();},
+    transaction(fn){return fn(this);}};
+  const ctx={storage,getWebSockets: () => sockets,acceptWebSocket: ws => sockets.push(ws)};
+  const env = {MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
+  const hub = new DeviceHub(ctx,env), tokens=new Map();
   env.DEVICE_HUB = {idFromName: n => n, get: () => ({fetch: req => hub.fetch(typeof req === 'string' ? new Request(req) : req)})};
-  const register = async (device_id, name = device_id, token = DEVICE_TOKEN) => {
+  const register = async (device_id, name = device_id, invalidToken = null) => {
+    if(!tokens.has(device_id)){
+      const code=await hub.fetch(new Request('https://hub.internal/pair-create',{method:'POST'}));
+      const {pairing_code}=await code.json();
+      const paired=await hub.fetch(new Request('https://hub.internal/pair-redeem',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({pairing_code,device_id,name,platform:'darwin'})}));
+      tokens.set(device_id,(await paired.json()).device_token);
+    }
     const ws = new Socket(); sockets.push(ws);
-    await hub.webSocketMessage(ws, JSON.stringify({type: 'register', device_id, name, platform: 'darwin', token}));
+    await hub.webSocketMessage(ws, JSON.stringify({type: 'register', device_id, name, platform: 'darwin',
+      token: invalidToken===null?tokens.get(device_id):invalidToken}));
     return ws;
   };
   const mcp = async (method, params, bearer = TOKEN) => {
@@ -39,7 +50,7 @@ test('internal MCP dispatcher exposes only router tools (external auth is mandat
   const init = await f.mcp('initialize', {});
   assert.equal(init.body.result.serverInfo.name, 'chattoharness-cloud-router');
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),
-    ['list_devices','call_device_tool']);
+    ['create_pairing_code','list_devices','call_device_tool']);
 });
 test('devices are independently authenticated and listed', async () => {
   const f = await fixture();

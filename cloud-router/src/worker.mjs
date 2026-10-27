@@ -1,4 +1,5 @@
 // Experimental multi-device router. Read cloud-router/README.md before deployment.
+import {newPairing,redeemPairing,verifyDevice} from './pairing.mjs';
 // No local desktop commands are executed inside this Worker.
 const MAX_BODY = 128 * 1024;
 const MAX_FRAME = 512 * 1024;
@@ -41,6 +42,19 @@ export class DeviceHub {
   }
   async fetch(req) {
     const pathname = new URL(req.url).pathname;
+    if (pathname === '/pair-create') {
+      if (req.method !== 'POST') return new Response('Method not allowed',{status:405});
+      return json(await newPairing(this.ctx));
+    }
+    if (pathname === '/pair-redeem') {
+      if(req.method!=='POST') return new Response('Method not allowed',{status:405});
+      if(Number(req.headers.get('content-length'))>4096) return json(error('PAIR_INVALID','Invalid pairing request'),413);
+      const raw=await req.text();
+      if(raw.length>4096)return json(error('PAIR_INVALID','Invalid pairing request'),413);
+      let input;try{input=JSON.parse(raw||'null');}catch{return json(error('PAIR_INVALID','Malformed pairing request'),400);}
+      const value=await redeemPairing(this.ctx,input);
+      return json(value,value.error?403:200);
+    }
     if (pathname === '/agent') {
       if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('WebSocket required', {status: 426});
       if (this.ctx.getWebSockets().length >= 32) return json(error('DEVICE_LIMIT', 'Too many agent connections'), 429);
@@ -89,9 +103,8 @@ export class DeviceHub {
           !['darwin','win32','linux'].includes(item.platform)) {
         ws.close(1008, 'Invalid registration'); return;
       }
-      let secrets;
-      try { secrets = JSON.parse(this.env.DEVICE_TOKENS || '{}'); } catch { secrets = {}; }
-      if (!await equalSecret(item.token, secrets[item.device_id])) { ws.close(1008, 'Unauthorized device'); return; }
+      // Only cloud-issued, device-bound credentials are accepted.
+      if (!await verifyDevice(this.ctx,item.device_id,item.token)) { ws.close(1008, 'Unauthorized device'); return; }
       const old = currentSocket(this.ctx, item.device_id);
       if (old && old !== ws) {
         this.failPending(old, 'DEVICE_DISCONNECTED');
@@ -121,6 +134,8 @@ export class DeviceHub {
   webSocketError(ws) { this.failPending(ws, 'EXECUTION_UNKNOWN'); }
 }
 const tools = [
+  {name:'create_pairing_code',description:'Create one short-lived (5 minutes), one-use secret to pair one personal device in its ChatToHarness desktop app. Treat the code as confidential; never paste it publicly.',
+    inputSchema:{type:'object',properties:{},additionalProperties:false}},
   {name: 'list_devices', description: 'List currently connected and authenticated ChatToHarness devices.',
     inputSchema: {type: 'object', additionalProperties: false, properties: {}}},
   {name: 'call_device_tool', description: 'Invoke a configured read-only tool on one explicitly selected device. Never silently substitute a different device.',
@@ -155,6 +170,10 @@ export const authorizedWorker = {
     if (message.method === 'tools/list') return json(rpc(id, {tools}));
     if (message.method !== 'tools/call') return json(rpcError(id, -32601, 'Method not found'));
     const {name, arguments: args = {}} = message.params || {};
+    if (name === 'create_pairing_code') {
+      const upstream=await getHub(env).fetch(new Request('https://hub.internal/pair-create',{method:'POST'}));
+      return json(rpc(id,textResult(await upstream.json())));
+    }
     if (name === 'list_devices') {
       const upstream = await getHub(env).fetch('https://hub.internal/devices');
       return json(rpc(id, textResult(await upstream.json())));

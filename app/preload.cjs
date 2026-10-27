@@ -4,6 +4,7 @@ const call=async(method,...args)=>{try{return await ipcRenderer.invoke('localhar
 contextBridge.exposeInMainWorld('localHarness',Object.freeze({
   executionList:input=>call('execution-list',input),executionDetail:id=>call('execution-detail',id),
   executionExport:ids=>call('execution-export',ids),executionDiagnostics:enabled=>call('execution-diagnostics',enabled),
+  cloudRouterPair:input=>call('cloud-router-pair',input),
   getState:()=>call('get-state'),saveSettings:value=>call('save-settings',value),
   getProxyDefaults:()=>call('proxy-defaults'),
   testProxy:input=>call('proxy-test',input),

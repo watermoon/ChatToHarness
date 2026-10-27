@@ -1,4 +1,4 @@
-# MCP resource Worker; OAuth must be deployed and validated before public activation.
+# MCP resource Worker. Cloudflare OAuth Resource Server validates bearer tokens.
 name = "chattoharness-cloud-router"
 main = "src/secure-worker.mjs"
 compatibility_date = "2026-10-26"
@@ -21,4 +21,4 @@ service = "chattoharness-auth"
 ALLOWED_TOOLS = "get_harness_status"
 MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
 OAUTH_ISSUER = "https://auth.example.invalid"
-GITHUB_ALLOWED_USER_IDS = ""
+ACCESS_ALLOWED_EMAILS = ""

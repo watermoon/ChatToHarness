@@ -1,4 +1,5 @@
-# GitHub OAuth + Cloudflare OAuth Provider 1.x authorization server.
+# OAuth 2.1 authorization server; Cloudflare Access protects ONLY /authorize.
+# Configure Cloudflare Zero Trust self-hosted Access application for auth host /authorize.
 name = "chattoharness-auth"
 main = "index.mjs"
 compatibility_date = "2026-10-26"
@@ -12,6 +13,4 @@ id = "REPLACE_WITH_REAL_KV_ID"
 [vars]
 OAUTH_ISSUER = "https://auth.example.invalid"
 MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
-GITHUB_ALLOWED_USER_IDS = ""
-GITHUB_CLIENT_ID = ""
-# GITHUB_CLIENT_SECRET is a Cloudflare secret and must never appear here.
+ACCESS_ALLOWED_EMAILS = ""

@@ -274,6 +274,10 @@ function registerIPC(){
   // Confirmations must not queue behind a connection check or another pending
   // management action. They can only resolve an already captured request ID.
   bind('mcp-resolve-approval',mcp(input=>{mcpManager.approve(input);return state();}));
+  bind('cloud-router-pair',input=>action(async()=>{
+    if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');
+    await cloudRouter.pair(input);
+  }));
   bind('open-logs',openLogs);
   bind('open-external',async id=>{if(typeof id!=='string')throw new Error('链接无效。');const help=documentationURL(id,locale);if(!help&&!Object.hasOwn(links,id))throw new Error('链接无效。');await shell.openExternal(help||links[id]);});
 }
@@ -354,12 +358,14 @@ else{
         }});
       mcpManager.history=history;
       mcpManager.broker=new McpGateway(mcpManager);runtime.gateway=mcpManager;
-      // Opt-in development bridge. Does not replace or share the existing Tunnel.
-      if(!testMode&&process.env.CTH_CLOUD_ROUTER_ENABLED==='1'){
-        const {CloudRouterService}=require('./cloud-router-service.cjs');
-        cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,log,onChange:publish});
-        cloudRouter.start({enabled:true,url:process.env.CTH_CLOUD_ROUTER_URL,token:process.env.CTH_CLOUD_DEVICE_TOKEN});
-      }
+      // Desktop pairing is opt-in, but once paired the agent reconnects on app start.
+      // Never alter the current Secure MCP Tunnel until real multi-device acceptance.
+      const {CloudRouterService}=require('./cloud-router-service.cjs');
+      const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
+      cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,
+        pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish});
+      if(!testMode)cloudRouter.startStored();
+
       mcpManager.on('state',()=>{const toolsCount=mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});
       mcpManager.on('approval',()=>{if(!quitting&&!installing)show();});
       if(settings.public().keySaved)runtime.update({state:'stopped'});

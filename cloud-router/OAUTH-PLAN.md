@@ -1,5 +1,5 @@
-# P3 OAuth 2.1 — implemented locally, not deployed
+# OAuth and device pairing
 
-See [P3-OAUTH.md](P3-OAUTH.md) for the actual GitHub sign-in, consent, Cloudflare OAuth Provider 1.x split-worker code, configuration gates and verified test boundary.
+For the current Cloudflare Access (not GitHub) authorization implementation, consult [P3-OAUTH.md](P3-OAUTH.md). For one-time device pairing and auto-reconnect, see [PAIRING.md](PAIRING.md).
 
-Do not activate the production connector before real Github OAuth, ChatGPT OAuth and multi-device end-to-end acceptance. Existing Tunnel connections remain unchanged.
+The end-user's existing ChatGPT login is not a verifiable authentication credential for arbitrary third-party WebSocket devices. Cloudflare Access authenticates the ChatGPT MCP operator, while per-device short-lived pairing and long-lived encrypted credentials protect registration. These processes are independent and transparent to the device user after pairing.

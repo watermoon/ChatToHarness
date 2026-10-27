@@ -799,3 +799,22 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [ ] 实际 GitHub OAuth 回调、令牌交换/刷新/撤销、Cloudflare 真实部署、ChatGPT 单插件 OAuth 接入仍待账号授权；绝不宣称已完成线上 E2E。
 - [ ] 多设备真机并发、权限及 Computer Use 仍需单独验收；现有三个 Tunnel 原样保留。
 - 续接步骤：阅读 cloud-router/P3-OAUTH.md，先配置真实域名、Cloudflare KV/GitHub OAuth App/ID 白名单与设备 secret；部署授权 Worker 再部署资源 Worker；先确认 OAuth 链路无误再切换任意连接。
+
+
+## 2026-10-27 Cloud Router P3/P4 — Cloudflare Access 与一次性配对（分支 feat/cloudflare-multi-device-router）
+
+- [x] 取消 GitHub OAuth 登录依赖：授权 Worker 使用 Cloudflare Access 提供的可信 `ctx.access.getIdentity()` 和邮箱白名单，仍保留 ChatGPT OAuth 2.1。
+- [x] 新增 `create_pairing_code`，5 分钟有效的高强度一次性配对码；Durable Object 持久保存设备凭据摘要，已配对设备不能冒名覆盖。
+- [x] ChatToHarness“连接配置”新增多设备配对 UI 与 IPC，设备端使用 `safeStorage` 加密保存密钥，应用启动后自动连接云路由；独立原 Tunnel 保持不变。
+- [x] 云端仅允许 `get_harness_status`，跨设备错投/离线不自动切换，终端、文件写入和 Computer Use 尚未开放。
+- [ ] 尚需云端真实部署、Cloudflare Access OAuth 联调、macOS/Windows 双机验收、设备撤销与重新配对、线上限流、正式安装包验收。
+- [ ] 本期测试结果及 Commit 以后续提交记录和实际验收日志为准，不以本地单测代替云端验收。
+
+### 2026-10-27 一次性配对阶段验收结果
+
+- [x] macOS 本地完整测试：`npm test` 602 项 / 586 PASS / 0 FAIL / 16 SKIP（其中包括新增设备配对测试）。
+- [x] Cloudflare Resource/Auth Worker：`cd cloud-router && npm run check` 双 Worker dry-run 构建通过，无公网部署。
+- [x] macOS arm64 App：`npm run build` 成功，输出 dist/mac-arm64/ChatToHarness.app；未公证，也未覆盖已安装的正式应用。
+- [x] 打包版 UI 冒烟 `npm run smoke:ui` 通过，覆盖 zh-CN/en/ja、导航、重启连接、加密配置等流程。第一次失败因英文配对文案未翻译，补齐后复验通过。
+- [ ] 尚未实际上线 Cloudflare Workers/Access，不具备正式单插件接入能力；需要真实域名、KV、Access 邮箱白名单和在线授权，以及 Windows/macOS 真机并发验收。
+- [ ] 实际配对后设备撤销/重置、云端限流和 WebSocket Hibernation 的在线验收仍待实现；保持旧三个 Tunnel 原状。

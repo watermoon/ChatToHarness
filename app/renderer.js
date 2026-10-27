@@ -9,6 +9,30 @@
   translateDocument(locale);
   const byId = (id) => document.getElementById(id);
   const form = byId('settings-form');
+  const cloudPairUrl=byId('cloud-mcp-url');
+  const cloudPairCode=byId('cloud-pair-code');
+  const cloudPairSubmit=byId('cloud-pair-submit');
+  const cloudPairStatus=byId('cloud-pair-status');
+  const cloudPairLabels={disabled:'尚未配对',connecting:'正在连接',ready:'已连接',reconnecting:'正在自动重连',failed:'连接失败'};
+  const updateCloudPairStatus=state=>{
+    const cloud=state?.cloudRouter;
+    cloudPairStatus.textContent=cloud ? (cloud.connected?t('已连接：'):(t(cloudPairLabels[cloud.phase]||'等待配对')+'：'))+
+      cloud.device_name : t('尚未配对');
+  };
+  cloudPairSubmit?.addEventListener('click',async()=>{
+    const input={mcpUrl:cloudPairUrl.value.trim(),pairingCode:cloudPairCode.value.trim()};
+    cloudPairSubmit.disabled=true;
+    cloudPairStatus.textContent=t('正在验证一次性配对码…');
+    try {
+      const state=await api.cloudRouterPair(input);
+      cloudPairCode.value='';
+      updateCloudPairStatus(state);
+    } catch(error) {
+      cloudPairStatus.textContent=t('配对失败：')+String(error?.message||t('请核对服务地址和配对码')).slice(0,120);
+    } finally {cloudPairSubmit.disabled=false;}
+  });
+  api.getState().then(updateCloudPairStatus).catch(()=>{});
+
   const tunnelInput = byId('tunnel-id');
   const keyInput = byId('api-key');
   const autoConnectInput = byId('auto-connect');
@@ -242,6 +266,8 @@
       actionEpoch = state.actionEpoch;
     }
     currentState = state;
+    updateCloudPairStatus(state);
+    if(state.cloudRouter?.mcp_url && !cloudPairUrl.value)cloudPairUrl.value=state.cloudRouter.mcp_url;
     if (state.system?.locale && state.system.locale !== locale) {
       locale = i18n.normalize(state.system.locale);
       translateDocument(locale);
