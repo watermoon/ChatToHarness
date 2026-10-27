@@ -864,3 +864,9 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] 复用 computer-use-device-id 文件下的随机持久 UUID，不用设备名称当唯一标识；改名及软件重启不改变 ID，清空身份数据或克隆配置需要重新处理身份关系。
 - [x] Mac 构建与 zh/en/ja UI 冒烟 PASS；npm test 615 项：599 PASS、16 SKIP、0 FAIL；Router + Auth 双 Worker dry-run PASS。
 - [ ] 真实 ChatGPT OAuth、三台设备实际配对及在线/离线 UI 数据一致性仍需线上验收；旧 Tunnel 不做改动。
+
+## 2026-10-27 Device roster cloud deployment
+
+- [x] Router Worker updated in Cloudflare: deployed version `24134db0-649a-4a58-8660-ce2f2ff0b963` with `GET /paired-devices`.
+- [x] Live probes: `/health` HTTP 200, anonymous `/paired-devices` HTTP 401, unauthenticated `/mcp` HTTP 401.
+- [ ] Authenticated paired-device roster on the user's actual 3 devices still requires physical device pairing and UI verification; anonymous denial alone does not verify the full flow.
