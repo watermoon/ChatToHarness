@@ -1,4 +1,5 @@
 'use strict';
+const {discoverCloudflare}=require('./cloudflare-discovery.cjs');
 // Desktop-only first-run bootstrap. Does not depend on MCP, Computer Use or shell access.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
@@ -15,12 +16,13 @@ function urls(s) {
  return {auth:'https://'+AUTH+'.'+s+'.workers.dev',
    mcp:'https://'+ROUTER+'.'+s+'.workers.dev/mcp'};
 }
-function config(source,s,kv,role) {
+function config(source,s,kv,role,accountId) {
  const u=urls(s),auth=role==='auth';
  const v={name:auth?AUTH:ROUTER,
    main:path.join(source,auth?'auth-server/index.mjs':'src/secure-worker.mjs'),
    compatibility_date:'2026-10-26',compatibility_flags:['global_fetch_strictly_public'],
    workers_dev:true,vars:{OAUTH_ISSUER:u.auth,MCP_RESOURCE_URL:u.mcp,OWNER_AUTH_EPOCH:'v1'}};
+ if(accountId)v.account_id=accountId;
  if(auth){if(kv)v.kv_namespaces=[{binding:'OAUTH_KV',id:kv}];}
  else{
    v.vars.ALLOWED_TOOLS='get_harness_status';
@@ -58,6 +60,7 @@ class CloudBootstrap {
   this.dir=path.join(home,'cloudflare-bootstrap');
   this.file=path.join(this.dir,'credentials.json');
   this.phase='idle';this.error='';this.busy=false;
+  this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
   this.record=this.read();if(this.record?.complete)this.phase='ready';
  }
  read(){
@@ -70,7 +73,9 @@ class CloudBootstrap {
   }catch{return null;}
  }
  status(){return {phase:this.phase,error:this.error,busy:this.busy,
-  subdomain:this.record?.subdomain||'',
+  subdomain:this.record?.subdomain||this.discoveredSubdomain,
+  accountId:this.record?.accountId||this.discoveredAccountId,
+  accountOptions:this.accountChoices,kvOptions:this.kvChoices,
   mcp_url:this.record?urls(this.record.subdomain).mcp:'',
   hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready'};}
  phaseSet(p,e=''){this.phase=p;this.error=e;this.onChange();}
@@ -90,11 +95,11 @@ class CloudBootstrap {
   if(res.code!==0)throw Error('CLOUD_WRANGLER_FAILED_'+args[0].toUpperCase());
   return res.stdout;
  }
- configs(s,kv){
+ configs(s,kv,accountId){
   fs.mkdirSync(this.dir,{recursive:true,mode:0o700});
   const a=path.join(this.dir,'auth.jsonc'),b=path.join(this.dir,'router.jsonc');
-  atomic(a,config(this.sourceDir,s,kv,'auth'));
-  atomic(b,config(this.sourceDir,s,kv,'router'));
+  atomic(a,config(this.sourceDir,s,kv,'auth',accountId));
+  atomic(b,config(this.sourceDir,s,kv,'router',accountId));
   return {auth:a,router:b};
  }
  async init(input){
@@ -102,32 +107,43 @@ class CloudBootstrap {
   this.busy=true;this.error='';this.onChange();
   try{
    if(!this.safeStorage?.isEncryptionAvailable?.())throw Error('CLOUD_SECURE_STORAGE_REQUIRED');
-   const s=subdomain(input?.subdomain||this.record?.subdomain||'');
-   if(this.record&&this.record.subdomain!==s)throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
    this.phaseSet('checking_account');
-   try{await this.cli(['whoami']);}
-   catch{this.phaseSet('authorize_browser');await this.cli(['login','--device','--use-keyring'],undefined,360000);
-    await this.cli(['whoami']);}
-   let kv=this.record?.kvId||input?.existingKvId||'';
-   if(kv&&!ID.test(kv))throw Error('CLOUD_KV_ID_INVALID');
+   let tokenOutput;
+   try{tokenOutput=await this.cli(['auth','token','--json']);}
+   catch{
+    this.phaseSet('authorize_browser');
+    await this.cli(['login','--device','--use-keyring'],undefined,360000);
+    tokenOutput=await this.cli(['auth','token','--json']);
+   }
+   this.phaseSet('discovering');
+   const found=await discoverCloudflare({
+     fetcher:this.fetcher,tokenOutput,
+     accountId:input?.accountId||this.record?.accountId||'',
+     kvId:input?.kvId||this.record?.kvId||''
+   });
+   this.accountChoices=found.accounts;
+   this.kvChoices=found.kvOptions;
+   this.discoveredAccountId=found.accountId||'';
+   this.discoveredSubdomain=found.subdomain||'';
+   if(found.needs){
+     this.phaseSet(found.needs==='account'?'choose_account':'choose_kv');
+     return this.status();
+   }
+   const s=subdomain(found.subdomain),accountId=found.accountId;
+   if(this.record&&this.record.subdomain!==s)throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
+   let kv=found.kvId;
    this.phaseSet('configuring');
-   let files=this.configs(s,kv);
+   let files=this.configs(s,kv,accountId);
    if(!kv){
-    this.phaseSet('creating_kv');
-    const listed=await this.cli(['kv','namespace','list']);
-    try{const items=JSON.parse(listed.slice(listed.indexOf('[')));
-     const found=items.filter(x=>x.title===AUTH+'-OAUTH_KV');
-     if(found.length===1&&ID.test(found[0].id))kv=found[0].id;
-    }catch{}
-    if(!kv){
+     this.phaseSet('creating_kv');
      const created=await this.cli(['kv','namespace','create','OAUTH_KV','--config',files.auth]);
      kv=created.match(/["']?id["']?\s*[:=]\s*["']?([a-f0-9]{32})/i)?.[1];
      if(!kv)throw Error('CLOUD_KV_CREATION_UNVERIFIED');
-    }
+     this.kvChoices=[{id:kv,title:'OAUTH_KV'}];
    }
-   files=this.configs(s,kv);
+   files=this.configs(s,kv,accountId);
    if(!this.record)this.record={schema:1,subdomain:s,kvId:kv,encryptedKey:'',complete:false};
-   this.record.kvId=kv;
+   this.record.kvId=kv;this.record.accountId=accountId;
    if(!this.record.encryptedKey){
     this.record.encryptedKey=this.safeStorage.encryptString(crypto.randomBytes(32).toString('hex')).toString('base64');
    }

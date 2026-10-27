@@ -13,11 +13,24 @@ function scenario() {
  const runner=async(node,script,args,opts)=>{
   calls.push(args.slice());
   if(args[0]==='secret')inputs.push(opts.input);
+  if(args[0]==='auth'&&args[1]==='token')return {code:0,stdout:JSON.stringify({type:'oauth',token:'x'.repeat(64)})};
   if(args[0]==='kv'&&args[2]==='list')return {code:0,stdout:'[]'};
   if(args[0]==='kv'&&args[2]==='create')return {code:0,stdout:'{"id":"'+kvId+'"}'};
   return {code:0,stdout:'ok'};
  };
- const fetcher=async(url,opts)=>{fetchCalls.push({url,opts});return {status:url.includes('.workers.dev/mcp')?401:200};};
+ const fetcher=async(url,opts)=>{
+  if(url.includes('api.cloudflare.com/')) {
+   let result;
+   if(url.endsWith('accounts?per_page=100'))
+     result=[{id:'b'.repeat(32),name:'Test account'}];
+   else if(url.includes('/workers/subdomain'))result={subdomain:'watermoon3322'};
+   else if(url.includes('/storage/kv/namespaces'))result=[];
+   else throw Error('MOCK_UNEXPECTED_API_REQUEST');
+   return {status:200,json:async()=>({success:true,result})};
+  }
+  fetchCalls.push({url,opts});
+  return {status:url.includes('.workers.dev/mcp')?401:200};
+ };
  const bootstrap=new CloudBootstrap({home,safeStorage:encryption,nodePath:process.execPath,sourceDir:source,runner,fetcher});
  return {home,calls,inputs,fetchCalls,bootstrap};
 }
@@ -58,7 +71,8 @@ test('invalid encryption and failed verification fail closed',async(t)=>{
  assert.equal((await a.bootstrap.init({subdomain:'watermoon3322'})).error,'CLOUD_SECURE_STORAGE_REQUIRED');
  assert.equal(a.calls.length,0);
  const b=scenario();t.after(()=>fs.rmSync(b.home,{recursive:true,force:true}));
- b.bootstrap.fetcher=async()=>({status:200});
+ const originalFetcher=b.bootstrap.fetcher;
+ b.bootstrap.fetcher=(url,opts)=>url.includes('api.cloudflare.com/')?originalFetcher(url,opts):Promise.resolve({status:200});
  const res=await b.bootstrap.init({subdomain:'watermoon3322',existingKvId:kvId});
  assert.equal(res.phase,'failed');
  assert.equal(res.error,'CLOUD_REMOTE_VERIFICATION_FAILED');

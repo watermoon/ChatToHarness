@@ -9,28 +9,50 @@
   translateDocument(locale);
   const byId = (id) => document.getElementById(id);
   const form = byId('settings-form');
-  const cloudSetupSubdomain=byId('cloud-subdomain');
-  const cloudSetupKv=byId('cloud-existing-kv');
+  const cloudAccountPicker=byId('cloud-account-picker');
+  const cloudKvPicker=byId('cloud-kv-picker');
+  const cloudAccountSelect=byId('cloud-account-select');
+  const cloudKvSelect=byId('cloud-kv-select');
+  const cloudDiscoveryInfo=byId('cloud-discovery-info');
   const cloudSetupStart=byId('cloud-setup-start');
   const cloudSetupCopyKey=byId('cloud-setup-copy-key');
   const cloudSetupStatus=byId('cloud-setup-status');
   const cloudPhaseLabels={idle:'尚未初始化',checking_account:'验证 Cloudflare 账户',
-    authorize_browser:'请在浏览器批准 Cloudflare 授权',configuring:'准备部署配置',
+    authorize_browser:'请在浏览器批准 Cloudflare 授权',discovering:'自动识别账户和 KV',
+    choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',configuring:'准备部署配置',
     creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
     setting_secret:'安全设置所有者密钥',deploying_router:'部署 MCP 服务',
     verifying:'验证服务',ready:'云端服务已就绪',failed:'云端初始化失败'};
+  const setupChoice=(element,items,render)=>{
+    const signature=JSON.stringify(items);
+    if(element.dataset.signature===signature)return;
+    element.dataset.signature=signature;
+    element.replaceChildren();
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=t('请选择');element.append(placeholder);
+    for(const item of items){
+      const option=document.createElement('option');option.value=item.id;option.textContent=render(item);element.append(option);
+    }
+  };
+  let lastDiscoveredAccount='';
   const updateCloudSetupStatus=state=>{
     const cloud=state?.cloudBootstrap;
     if(!cloud)return;
     cloudSetupStatus.textContent=t(cloudPhaseLabels[cloud.phase]||'尚未初始化')+(cloud.error?'：'+cloud.error:'');
     cloudSetupStart.disabled=Boolean(cloud.busy);
     cloudSetupCopyKey.hidden=!cloud.hasOwnerKey;
-    if(cloud.subdomain&&!cloudSetupSubdomain.value)cloudSetupSubdomain.value=cloud.subdomain;
+    setupChoice(cloudAccountSelect,cloud.accountOptions||[],a=>a.name);
+    setupChoice(cloudKvSelect,cloud.kvOptions||[],k=>k.title);
+    cloudAccountPicker.hidden=cloud.phase!=='choose_account';
+    cloudKvPicker.hidden=cloud.phase!=='choose_kv';
+    lastDiscoveredAccount=cloud.accountId||lastDiscoveredAccount;
+    if(cloud.subdomain)cloudDiscoveryInfo.textContent=t('检测到子域名：')+cloud.subdomain+'.workers.dev';
   };
   cloudSetupStart?.addEventListener('click',async()=>{
     cloudSetupStart.disabled=true;
-    try{await api.cloudBootstrapStart({subdomain:cloudSetupSubdomain.value.trim(),existingKvId:cloudSetupKv.value.trim()});
-    }catch(e){cloudSetupStatus.textContent=t('云端初始化失败')+'：'+String(e.message||e).slice(0,120);}
+    try{await api.cloudBootstrapStart({
+      accountId:cloudAccountSelect.value||lastDiscoveredAccount,
+      kvId:cloudKvSelect.value
+    });}catch(e){cloudSetupStatus.textContent=t('云端初始化失败')+'：'+String(e.message||e).slice(0,120);}
     finally{const state=await api.getState().catch(()=>null);updateCloudSetupStatus(state);}
   });
   cloudSetupCopyKey?.addEventListener('click',async()=>{

@@ -846,3 +846,12 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] Mac 安装包本地构建和动态配置双 Worker dry-run 通过；CloudBootstrap 单测通过。
 - [ ] 真实 Cloudflare 生产部署和 ChatGPT OAuth、多设备联调尚未通过；不得宣称生产已上线。
 - [ ] Windows 安装包及真实 Windows 初始化仍待复验；Bundled Wrangler 体积需后续优化。
+
+
+## 2026-10-27 Cloudflare bootstrap auto-discovery
+
+- [x] Cloudflare API 自动读取已授权账户列表、Workers 子域名、现有 OAuth KV namespace ID，去除用户手填子域名与 KV ID。
+- [x] 通过 Wrangler auth token --json 获取临时凭据，仅在 Electron 主进程内存使用，不传递到 UI、日志或 Git；Cloudflare HTTPS API 仅访问官方固定域名。
+- [x] 单账户/单 KV 自动选择；多个候选账户或命名空间时要求明确选择；无 KV 才创建；持久化账户 ID 并校验归属。
+- [x] 真实 Cloudflare 账户查得子域名 watermoon3322、KV OAUTH_KV；新版自动发现辅助模块对真实 API 验证通过；双 Worker 动态配置 dry-run 通过。
+- [x] Mac 安装包重新构建、zh/en/ja UI 冒烟通过；npm test 全仓库 612 项：597 PASS、15 SKIP、0 FAIL。

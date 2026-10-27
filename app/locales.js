@@ -1353,6 +1353,14 @@
   "云端初始化失败": ["Cloud initialization failed", "クラウドの初期化に失敗しました"],
   "授权密钥已复制；请在 ChatGPT 授权页面粘贴": ["Owner key copied. Paste it into the ChatGPT authorization page.", "所有者キーをコピーしました。ChatGPT の認証ページに貼り付けてください。"],
   "复制密钥失败": ["Could not copy the key", "キーのコピーに失敗しました"],
+  "点击初始化后自动识别 Cloudflare 账户、workers.dev 子域名及已有的 OAuth KV，无需复制 ID。": ["Automatically discover your Cloudflare account, workers.dev subdomain and existing OAuth KV. No IDs to copy.", "Cloudflare アカウント、workers.dev サブドメイン、既存の OAuth KV を自動検出します。ID のコピーは不要です。"],
+  "选择 Cloudflare 账户": ["Select Cloudflare account", "Cloudflare アカウントを選択"],
+  "选择 OAuth KV": ["Select OAuth KV", "OAuth KV を選択"],
+  "请选择": ["Please select", "選択してください"],
+  "自动识别账户和 KV": ["Discovering Cloudflare account and KV", "Cloudflare アカウントと KV を検出中"],
+  "请选择 Cloudflare 账户": ["Select a Cloudflare account", "Cloudflare アカウントを選択してください"],
+  "请选择 OAuth KV": ["Select an OAuth KV", "OAuth KV を選択してください"],
+  "检测到子域名：": ["Detected subdomain: ", "検出されたサブドメイン："],
 };
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else root.CTHMessages = Object.freeze(messages);
