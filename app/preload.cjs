@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('localHarness',Object.freeze({
   executionList:input=>call('execution-list',input),executionDetail:id=>call('execution-detail',id),
   executionExport:ids=>call('execution-export',ids),executionDiagnostics:enabled=>call('execution-diagnostics',enabled),
   cloudRouterPair:input=>call('cloud-router-pair',input),
+  cloudRouterListDevices:()=>call('cloud-router-list-devices'),
   cloudBootstrapStart:input=>call('cloud-bootstrap-start',input),
   cloudBootstrapCopyKey:()=>call('cloud-bootstrap-copy-key'),
   getState:()=>call('get-state'),saveSettings:value=>call('save-settings',value),

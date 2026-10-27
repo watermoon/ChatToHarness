@@ -177,3 +177,12 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Cloudflare selection and paired-device inventory */
+#cloud-account-picker select,#cloud-kv-picker select{width:100%;min-height:38px;max-width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)}
+#cloud-account-picker select:focus-visible,#cloud-kv-picker select:focus-visible{outline:3px solid #98b4fa;outline-offset:2px}
+.cloud-device-list{list-style:none;padding:0;margin:6px 0 10px;display:grid;gap:8px}
+.cloud-device-item{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+.cloud-device-item strong{font-size:12px;font-weight:600;overflow-wrap:anywhere}
+.cloud-device-item span{font-size:11px;color:var(--muted);overflow-wrap:anywhere}

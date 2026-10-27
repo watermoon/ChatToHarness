@@ -61,6 +61,7 @@ class CloudBootstrap {
   this.file=path.join(this.dir,'credentials.json');
   this.phase='idle';this.error='';this.busy=false;
   this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
+  this.selectedKvId='';
   this.record=this.read();if(this.record?.complete)this.phase='ready';
  }
  read(){
@@ -76,6 +77,7 @@ class CloudBootstrap {
   subdomain:this.record?.subdomain||this.discoveredSubdomain,
   accountId:this.record?.accountId||this.discoveredAccountId,
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
+  kvId:this.selectedKvId||this.record?.kvId,
   mcp_url:this.record?urls(this.record.subdomain).mcp:'',
   hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready'};}
  phaseSet(p,e=''){this.phase=p;this.error=e;this.onChange();}
@@ -102,29 +104,43 @@ class CloudBootstrap {
   atomic(b,config(this.sourceDir,s,kv,'router',accountId));
   return {auth:a,router:b};
  }
+ async findOptions(input={},allowLogin=false){
+   this.phaseSet('discovering');
+   let token;
+   try{token=await this.cli(['auth','token','--json']);}
+   catch{
+     if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
+     this.phaseSet('authorize_browser');
+     await this.cli(['login','--device','--use-keyring'],undefined,360000);
+     token=await this.cli(['auth','token','--json']);
+   }
+   const chosenAccount=input.accountId||this.record?.accountId||'';
+   const chosenKv=(this.record?.accountId===chosenAccount?this.record?.kvId:'')||'';
+   const found=await discoverCloudflare({fetcher:this.fetcher,tokenOutput:token,
+     accountId:chosenAccount,kvId:input.kvId||chosenKv});
+   this.accountChoices=found.accounts;
+   this.kvChoices=found.kvOptions;
+   this.discoveredAccountId=found.accountId||'';
+   this.discoveredSubdomain=found.subdomain||'';
+   this.selectedKvId=found.kvId||'';
+   this.phaseSet(found.needs==='account'?'choose_account':
+     found.needs==='kv'?'choose_kv':this.record?.complete?'ready':'selection_ready');
+   return found;
+ }
+ async preview(input={}){
+   if(this.busy)return this.status();
+   this.busy=true;this.onChange();
+   try{await this.findOptions(input,false);}
+   catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_DISCOVERY_FAILED').split(':')[0]);}
+   finally{this.busy=false;this.onChange();}
+   return this.status();
+ }
  async init(input){
   if(this.busy)throw Error('CLOUD_SETUP_BUSY');
   this.busy=true;this.error='';this.onChange();
   try{
    if(!this.safeStorage?.isEncryptionAvailable?.())throw Error('CLOUD_SECURE_STORAGE_REQUIRED');
-   this.phaseSet('checking_account');
-   let tokenOutput;
-   try{tokenOutput=await this.cli(['auth','token','--json']);}
-   catch{
-    this.phaseSet('authorize_browser');
-    await this.cli(['login','--device','--use-keyring'],undefined,360000);
-    tokenOutput=await this.cli(['auth','token','--json']);
-   }
-   this.phaseSet('discovering');
-   const found=await discoverCloudflare({
-     fetcher:this.fetcher,tokenOutput,
-     accountId:input?.accountId||this.record?.accountId||'',
-     kvId:input?.kvId||this.record?.kvId||''
-   });
-   this.accountChoices=found.accounts;
-   this.kvChoices=found.kvOptions;
-   this.discoveredAccountId=found.accountId||'';
-   this.discoveredSubdomain=found.subdomain||'';
+   const found=await this.findOptions(input,true);
    if(found.needs){
      this.phaseSet(found.needs==='account'?'choose_account':'choose_kv');
      return this.status();

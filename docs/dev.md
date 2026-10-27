@@ -855,3 +855,12 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] 单账户/单 KV 自动选择；多个候选账户或命名空间时要求明确选择；无 KV 才创建；持久化账户 ID 并校验归属。
 - [x] 真实 Cloudflare 账户查得子域名 watermoon3322、KV OAUTH_KV；新版自动发现辅助模块对真实 API 验证通过；双 Worker 动态配置 dry-run 通过。
 - [x] Mac 安装包重新构建、zh/en/ja UI 冒烟通过；npm test 全仓库 612 项：597 PASS、15 SKIP、0 FAIL。
+
+## 2026-10-27 Cloud Router selectable Cloudflare configuration and paired-device inventory
+
+- [x] Cloudflare 账户和已有 OAuth KV 自动发现后，在客户端常驻列表展示；只有一项或与现有配置匹配时自动预选。允许刷新、切换账户和 KV；当前选中账户的 Workers 子域名由 Cloudflare API 读取，不要求输入。
+- [x] 新增设备绑定认证的 GET /paired-devices：在 Durable Object 使用已配对记录和活动 WebSocket 构建包含在线/离线状态的清单，拒绝无有效设备 Token 的访问，绝不返回 Token 或哈希。
+- [x] 客户端已配对设备列表展示名称、平台、在线/离线、当前设备及持久随机 device_id；自动刷新并保留离线时最近一次快照。
+- [x] 复用 computer-use-device-id 文件下的随机持久 UUID，不用设备名称当唯一标识；改名及软件重启不改变 ID，清空身份数据或克隆配置需要重新处理身份关系。
+- [x] Mac 构建与 zh/en/ja UI 冒烟 PASS；npm test 615 项：599 PASS、16 SKIP、0 FAIL；Router + Auth 双 Worker dry-run PASS。
+- [ ] 真实 ChatGPT OAuth、三台设备实际配对及在线/离线 UI 数据一致性仍需线上验收；旧 Tunnel 不做改动。

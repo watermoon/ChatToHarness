@@ -55,3 +55,42 @@ test('terminal, filesystem and Computer Use are always denied before existing ma
   await assert.rejects(()=>service.execute('get_harness_status',{project_path:'/private'}),/CLOUD_ROUTER_INVALID_ARGUMENTS/);
   assert.equal(calls.length,0);
 });
+
+
+test('desktop paired roster uses stored device token, masks secrets, marks current device and keeps offline records',async()=>{
+  const calls=[];
+  const pairStore={read(){return {mcpUrl:'https://router.example/mcp',
+    agentUrl:'wss://router.example/agent',token:TOKEN};}};
+  const fetcher=async(url,opts)=>{
+    calls.push({url,headers:opts.headers});
+    return {ok:true,json:async()=>[
+      {device_id:'moon',name:'MOON',platform:'win32',online:false,paired_at:1000},
+      {device_id:'cu-00000000-0000-4000-8000-000000000001',name:'Mac',platform:'darwin',
+       online:true,paired_at:1001}
+    ]};
+  };
+  const service=new CloudRouterService({manager:{call:async()=>{}},
+    identity:{id:'cu-00000000-0000-4000-8000-000000000001',name:'Mac',platform:'darwin'},
+    pairStore,fetcher,WebSocketImpl:Socket});
+  const state=await service.refreshDevices();
+  assert.equal(state.devices.length,2);
+  assert.deepEqual(state.devices.map(x=>[x.name,x.online,x.current]),[
+    ['MOON',false,false],['Mac',true,true]]);
+  assert.match(calls[0].url,/\/paired-devices$/);
+  assert.equal(calls[0].headers.authorization,'Bearer '+TOKEN);
+  assert.equal(calls[0].headers['x-device-id'],state.device_id);
+  assert.equal(JSON.stringify(state).includes(TOKEN),false);
+});
+test('paired roster network errors are surfaced while previous snapshot stays visible',async()=>{
+  let fail=false;
+  const service=new CloudRouterService({
+    manager:{call:async()=>{}},identity:{id:'mac',name:'Mac',platform:'darwin'},
+    pairStore:{read:()=>({mcpUrl:'https://router.example/mcp',token:TOKEN})},
+    fetcher:async()=>fail?Promise.reject(Error('offline')):{
+      ok:true,json:async()=>[{device_id:'mac',name:'Mac',platform:'darwin',online:true}]
+    },WebSocketImpl:Socket});
+  await service.refreshDevices();fail=true;
+  const status=await service.refreshDevices();
+  assert.equal(status.devices.length,1);
+  assert.equal(status.devicesError,'CLOUD_ROSTER_UNAVAILABLE');
+});

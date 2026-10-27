@@ -33,6 +33,13 @@ export default {
       return Response.json({ok:true,component:'chattoharness-cloud-router'});
     // Agent registration has separate per-device authentication; not an MCP endpoint.
     if (path === '/agent') return authorizedWorker.fetch(request,env);
+    // Device-bound read-only roster: verified again by the Durable Object.
+    // Never expose this endpoint through anonymous requests or owner OAuth bypass.
+    if (path === '/paired-devices') {
+      if (request.method !== 'GET') return new Response('Method not allowed',{status:405});
+      return env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName('default')).fetch(
+        new Request('https://hub.internal/paired-devices',request));
+    }
     // Pair redemption is a high-entropy single-use capability. The only public
     // anonymous operation, routed to the private Durable Object.
     if(path === '/pair-redeem') {

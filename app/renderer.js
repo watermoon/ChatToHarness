@@ -14,58 +14,121 @@
   const cloudAccountSelect=byId('cloud-account-select');
   const cloudKvSelect=byId('cloud-kv-select');
   const cloudDiscoveryInfo=byId('cloud-discovery-info');
+  const cloudSetupRefresh=byId('cloud-setup-refresh');
   const cloudSetupStart=byId('cloud-setup-start');
   const cloudSetupCopyKey=byId('cloud-setup-copy-key');
   const cloudSetupStatus=byId('cloud-setup-status');
   const cloudPhaseLabels={idle:'尚未初始化',checking_account:'验证 Cloudflare 账户',
     authorize_browser:'请在浏览器批准 Cloudflare 授权',discovering:'自动识别账户和 KV',
-    choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',configuring:'准备部署配置',
-    creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
+    choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',selection_ready:'配置已识别',
+    configuring:'准备部署配置',creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
     setting_secret:'安全设置所有者密钥',deploying_router:'部署 MCP 服务',
     verifying:'验证服务',ready:'云端服务已就绪',failed:'云端初始化失败'};
-  const setupChoice=(element,items,render)=>{
+  const setupChoice=(element,items,render,selected,defaultLabel)=>{
     const signature=JSON.stringify(items);
-    if(element.dataset.signature===signature)return;
-    element.dataset.signature=signature;
-    element.replaceChildren();
-    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=t('请选择');element.append(placeholder);
-    for(const item of items){
-      const option=document.createElement('option');option.value=item.id;option.textContent=render(item);element.append(option);
-    }
+    if(element.dataset.signature!==signature){
+      const previouslySelected=element.value;
+      element.dataset.signature=signature;
+      element.replaceChildren();
+      const placeholder=document.createElement('option');placeholder.value='';
+      placeholder.textContent=t(defaultLabel);element.append(placeholder);
+      for(const item of items){
+        const option=document.createElement('option');option.value=item.id;
+        option.textContent=render(item);element.append(option);
+      }
+      const wanted=selected||previouslySelected;
+      element.value=items.some(i=>i.id===wanted)?wanted:items.length===1?items[0].id:'';
+    }else if(selected && !element.value && items.some(i=>i.id===selected))element.value=selected;
   };
   let lastDiscoveredAccount='';
   const updateCloudSetupStatus=state=>{
     const cloud=state?.cloudBootstrap;
     if(!cloud)return;
-    cloudSetupStatus.textContent=t(cloudPhaseLabels[cloud.phase]||'尚未初始化')+(cloud.error?'：'+cloud.error:'');
+    cloudSetupStatus.textContent=t(cloudPhaseLabels[cloud.phase]||'尚未初始化')+
+      (cloud.error?'：'+cloud.error:'');
     cloudSetupStart.disabled=Boolean(cloud.busy);
+    cloudSetupRefresh.disabled=Boolean(cloud.busy);
     cloudSetupCopyKey.hidden=!cloud.hasOwnerKey;
-    setupChoice(cloudAccountSelect,cloud.accountOptions||[],a=>a.name);
-    setupChoice(cloudKvSelect,cloud.kvOptions||[],k=>k.title);
-    cloudAccountPicker.hidden=cloud.phase!=='choose_account';
-    cloudKvPicker.hidden=cloud.phase!=='choose_kv';
+    setupChoice(cloudAccountSelect,cloud.accountOptions||[],a=>a.name,
+      cloud.accountId,'请选择 Cloudflare 账户');
+    setupChoice(cloudKvSelect,cloud.kvOptions||[],k=>k.title,
+      cloud.kvId,'创建新的 OAuth KV');
+    cloudAccountPicker.hidden=!(cloud.accountOptions||[]).length;
+    cloudKvPicker.hidden=!(cloud.accountOptions||[]).length || !cloud.subdomain;
     lastDiscoveredAccount=cloud.accountId||lastDiscoveredAccount;
-    if(cloud.subdomain)cloudDiscoveryInfo.textContent=t('检测到子域名：')+cloud.subdomain+'.workers.dev';
+    if(cloud.subdomain)cloudDiscoveryInfo.textContent=t('检测到子域名：')+
+      cloud.subdomain+'.workers.dev';
   };
+  const discoverCloud=async input=>{
+    try{const state=await api.cloudBootstrapDiscover(input||{});updateCloudSetupStatus({cloudBootstrap:state});}
+    catch(e){cloudSetupStatus.textContent=t('自动识别失败')+'：'+String(e?.message||e).slice(0,120);}
+  };
+  cloudSetupRefresh?.addEventListener('click',()=>{void discoverCloud({
+    accountId:cloudAccountSelect.value||lastDiscoveredAccount
+  });});
+  cloudAccountSelect?.addEventListener('change',()=>{
+    if(!cloudAccountSelect.value)return;
+    cloudKvSelect.value='';
+    void discoverCloud({accountId:cloudAccountSelect.value});
+  });
   cloudSetupStart?.addEventListener('click',async()=>{
     cloudSetupStart.disabled=true;
     try{await api.cloudBootstrapStart({
-      accountId:cloudAccountSelect.value||lastDiscoveredAccount,
-      kvId:cloudKvSelect.value
-    });}catch(e){cloudSetupStatus.textContent=t('云端初始化失败')+'：'+String(e.message||e).slice(0,120);}
+      accountId:cloudAccountSelect.value||lastDiscoveredAccount,kvId:cloudKvSelect.value
+    });}catch(e){cloudSetupStatus.textContent=t('云端初始化失败')+
+      '：'+String(e.message||e).slice(0,120);}
     finally{const state=await api.getState().catch(()=>null);updateCloudSetupStatus(state);}
   });
   cloudSetupCopyKey?.addEventListener('click',async()=>{
-    try{await api.cloudBootstrapCopyKey();cloudSetupStatus.textContent=t('授权密钥已复制；请在 ChatGPT 授权页面粘贴');}
-    catch(e){cloudSetupStatus.textContent=t('复制密钥失败')+'：'+String(e.message||e).slice(0,120);}
+    try{await api.cloudBootstrapCopyKey();cloudSetupStatus.textContent=
+      t('授权密钥已复制；请在 ChatGPT 授权页面粘贴');}
+    catch(e){cloudSetupStatus.textContent=t('复制密钥失败')+
+      '：'+String(e.message||e).slice(0,120);}
   });
   const cloudPairUrl=byId('cloud-mcp-url');
   const cloudPairCode=byId('cloud-pair-code');
   const cloudPairSubmit=byId('cloud-pair-submit');
+  const cloudDevicesList=byId('cloud-device-list');
+  const cloudDevicesStatus=byId('cloud-devices-status');
+  const cloudDevicesRefresh=byId('cloud-devices-refresh');
+  const displayCloudDevices=cloud=>{
+    if(!cloud)return;
+    cloudDevicesRefresh.disabled=Boolean(cloud.devicesRefreshing)||!cloud.paired;
+    cloudDevicesList.replaceChildren();
+    const devices=Array.isArray(cloud.devices)?cloud.devices:[];
+    if(!devices.length){
+      const empty=document.createElement('li');empty.textContent=t(cloud.paired?
+        '尚未同步设备清单':'尚未配对设备');cloudDevicesList.append(empty);
+    }
+    for(const device of devices){
+      const li=document.createElement('li');li.className='cloud-device-item';
+      const heading=document.createElement('strong');
+      heading.textContent=String(device.name||device.device_id).slice(0,80)+
+        (device.current?' · '+t('当前设备'):'');
+      const info=document.createElement('span');
+      info.textContent=String(device.platform||'')+' · '+
+        t(device.online?'在线':'离线')+' · '+String(device.device_id||'').slice(0,80);
+      li.append(heading,info);cloudDevicesList.append(li);
+    }
+    cloudDevicesStatus.textContent=cloud.devicesError?
+      t('设备清单暂时无法更新（显示上次结果）')+'：'+cloud.devicesError:
+      cloud.devicesUpdatedAt?t('设备清单更新时间：')+
+        new Date(cloud.devicesUpdatedAt).toLocaleTimeString():t('配对后可查看设备清单。');
+  };
+  const refreshCloudDevices=async()=>{
+    try{const cloud=await api.cloudRouterListDevices();displayCloudDevices(cloud);}
+    catch(e){cloudDevicesStatus.textContent=t('设备清单暂时无法更新（显示上次结果）');}
+  };
+  cloudDevicesRefresh?.addEventListener('click',()=>{void refreshCloudDevices();});
+  if(typeof setInterval==='function')setInterval(()=>{if(!byId('panel-connection').hidden){
+    void api.getState().then(state=>state?.cloudRouter?.paired && refreshCloudDevices()).catch(()=>{});
+  }},30000);
+
   const cloudPairStatus=byId('cloud-pair-status');
   const cloudPairLabels={disabled:'尚未配对',connecting:'正在连接',ready:'已连接',reconnecting:'正在自动重连',failed:'连接失败'};
   const updateCloudPairStatus=state=>{
     const cloud=state?.cloudRouter;
+    displayCloudDevices(cloud);
     cloudPairStatus.textContent=cloud ? (cloud.connected?t('已连接：'):(t(cloudPairLabels[cloud.phase]||'等待配对')+'：'))+
       cloud.device_name : t('尚未配对');
   };
@@ -77,11 +140,13 @@
       const state=await api.cloudRouterPair(input);
       cloudPairCode.value='';
       updateCloudPairStatus(state);
+      void refreshCloudDevices();
     } catch(error) {
       cloudPairStatus.textContent=t('配对失败：')+String(error?.message||t('请核对服务地址和配对码')).slice(0,120);
     } finally {cloudPairSubmit.disabled=false;}
   });
-  api.getState().then(updateCloudPairStatus).catch(()=>{});
+  api.getState().then(s=>{updateCloudPairStatus(s);if(s?.cloudRouter?.paired)void refreshCloudDevices();}).catch(()=>{});
+  void discoverCloud({});
 
   const tunnelInput = byId('tunnel-id');
   const keyInput = byId('api-key');

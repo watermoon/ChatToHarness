@@ -20,6 +20,7 @@ class CloudRouterService {
     this.phase = 'disabled';
     this.lastError = '';
     this.mcpUrl=null;
+    this.devices=[];this.devicesUpdatedAt=null;this.devicesError='';this.devicesRefreshing=false;this.devicesPromise=null;
   }
   start({url, token, enabled = false} = {}) {
     this.stop();
@@ -60,6 +61,37 @@ class CloudRouterService {
     if(!saved)throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
     return this.start({enabled:true,url:saved.agentUrl,token:saved.token});
   }
+  async refreshDevices() {
+    if(this.devicesPromise)return this.devicesPromise;
+    const paired=this.pairStore?.read();
+    if(!paired)return this.status();
+    this.devicesRefreshing=true;this.onChange(this.status());
+    this.devicesPromise=(async()=>{
+      try{
+        const base=new URL(paired.mcpUrl).origin;
+        const res=await this.fetcher(base+'/paired-devices',{
+          method:'GET',headers:{authorization:'Bearer '+paired.token,'x-device-id':this.identity.id},
+          signal:AbortSignal.timeout(12000)
+        });
+        if(!res.ok)throw Error('CLOUD_ROSTER_UNAVAILABLE');
+        const items=await res.json();
+        if(!Array.isArray(items)||items.length>200)throw Error('CLOUD_ROSTER_RESPONSE_INVALID');
+        this.devices=items.map(x=>{
+          if(!x||!(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/).test(x.device_id) ||
+            typeof x.name!=='string'||x.name.length>80 ||
+            !['darwin','win32','linux'].includes(x.platform)||typeof x.online!=='boolean')
+            throw Error('CLOUD_ROSTER_RESPONSE_INVALID');
+          return {device_id:x.device_id,name:x.name,platform:x.platform,
+            online:x.online,current:x.device_id===this.identity.id,
+            paired_at:Number.isFinite(x.paired_at)?x.paired_at:null};
+        });
+        this.devicesUpdatedAt=Date.now();this.devicesError='';
+      }catch(e){this.devicesError=e.message?.startsWith('CLOUD_')?e.message:'CLOUD_ROSTER_UNAVAILABLE';}
+      finally{this.devicesRefreshing=false;this.devicesPromise=null;this.onChange(this.status());}
+      return this.status();
+    })();
+    return this.devicesPromise;
+  }
   async execute(name, args) {
     if (FORBIDDEN.has(name) || !SAFE.includes(name)) throw new Error('CLOUD_ROUTER_TOOL_DENIED');
     if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length)
@@ -72,6 +104,8 @@ class CloudRouterService {
       connected: Boolean(this.agent?.connected), device_id: this.identity.id,
       device_name: this.identity.name, platform: this.identity.platform,
       paired:Boolean(this.mcpUrl),...(this.mcpUrl?{mcp_url:this.mcpUrl}:{}),
+      devices:this.devices,devicesUpdatedAt:this.devicesUpdatedAt,
+      devicesError:this.devicesError,devicesRefreshing:this.devicesRefreshing,
       ...(this.lastError ? {error: this.lastError} : {})};
   }
   stop() { this.agent?.close(); this.agent = null; this.phase = 'disabled'; this.lastError = ''; }

@@ -17,6 +17,7 @@ async function fixture() {
   const sockets = [];
   const storage={items:new Map(),get(k){return Promise.resolve(this.items.get(k));},
     put(k,v){this.items.set(k,v);return Promise.resolve();},delete(k){this.items.delete(k);return Promise.resolve();},
+    list({prefix,limit}){return Promise.resolve(new Map([...this.items].filter(([k])=>k.startsWith(prefix)).slice(0,limit)));},
     transaction(fn){return fn(this);}};
   const ctx={storage,getWebSockets: () => sockets,acceptWebSocket: ws => sockets.push(ws)};
   const env = {MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
@@ -43,7 +44,7 @@ async function fixture() {
     const res = await worker.fetch(req, env);
     return {status: res.status, body: await res.json()};
   };
-  return {hub, env, worker, register, mcp};
+  return {hub, env, worker, register, mcp, tokens};
 }
 test('internal MCP dispatcher exposes only router tools (external auth is mandatory)', async () => {
   const f = await fixture();
@@ -117,4 +118,26 @@ test('explicit transport failures and malformed arguments do not execute', async
     arguments: {device_id: 'moon', tool_name: 'get_harness_status', arguments: []}});
   assert.equal(bad.body.result.isError, true);
   assert.equal(ws.messages.length, 1);
+});
+
+
+test('paired device roster includes offline entries but requires this device bearer credential',async()=>{
+  const f=await fixture();
+  const moon=await f.register('moon','MOON');
+  await f.register('mac','MacBook');
+  f.hub.webSocketClose(moon);
+  moon.close(1000);
+  const roster=async(id,token)=>f.hub.fetch(new Request('https://hub.internal/paired-devices',{
+    headers:{'x-device-id':id,'authorization':'Bearer '+token}
+  }));
+  const unauthorized=await roster('moon','wrong');
+  assert.equal(unauthorized.status,401);
+  assert.equal((await unauthorized.json()).error,'UNAUTHORIZED_DEVICE');
+  assert.equal((await roster('unknown',f.tokens.get('mac'))).status,401);
+  const ok=await roster('mac',f.tokens.get('mac'));
+  assert.equal(ok.status,200);
+  const devices=await ok.json();
+  assert.deepEqual(devices.map(x=>[x.device_id,x.online]),[['mac',true],['moon',false]]);
+  assert.equal(devices.some(x=>'hash' in x||'device_token' in x),false);
+  assert.ok(devices.every(x=>Number.isFinite(x.paired_at)));
 });

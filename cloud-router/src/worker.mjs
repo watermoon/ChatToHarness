@@ -63,10 +63,26 @@ export class DeviceHub {
       this.ctx.acceptWebSocket(server);
       return new Response(null, {status: 101, webSocket: client});
     }
-    if (pathname === '/devices') {
-      return json(this.ctx.getWebSockets().filter(ws => ws.readyState === 1).map(registered)
-        .filter(Boolean).map(({device_id, name, platform}) => ({device_id, name, platform, online: true}))
-        .sort((a,b) => a.device_id.localeCompare(b.device_id)));
+    if (pathname === '/devices' || pathname === '/paired-devices') {
+      if (req.method !== 'GET') return new Response('Method not allowed',{status:405});
+      if (pathname === '/paired-devices') {
+        const deviceId=req.headers.get('x-device-id');
+        const header=req.headers.get('authorization')||'';
+        const token=header.startsWith('Bearer ')?header.slice(7):'';
+        if (!await verifyDevice(this.ctx,deviceId,token))
+          return json({error:'UNAUTHORIZED_DEVICE'},401);
+      }
+      const entries=await this.ctx.storage.list({prefix:'device:',limit:200});
+      const online=new Set(this.ctx.getWebSockets().filter(ws=>ws.readyState===1)
+        .map(registered).filter(Boolean).map(item=>item.device_id));
+      const devices=[];
+      for (const [key,item] of entries) {
+        if (!item || !ID.test(key.slice(7)) ||
+          typeof item.name!=='string' || typeof item.platform!=='string') continue;
+        devices.push({device_id:key.slice(7),name:item.name,platform:item.platform,
+          online:online.has(key.slice(7)),paired_at:item.paired_at||null});
+      }
+      return json(devices.sort((a,b)=>a.device_id.localeCompare(b.device_id)));
     }
     if (pathname === '/invoke') {
       const input = await req.json().catch(() => null);
