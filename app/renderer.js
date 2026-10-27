@@ -23,8 +23,11 @@
     choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',selection_ready:'配置已识别',
     configuring:'准备部署配置',creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
     setting_secret:'安全设置所有者密钥',deploying_router:'部署 MCP 服务',
-    verifying:'验证服务',ready:'云端服务已就绪',degraded:'云端服务不可用',failed:'云端初始化失败'};
-  const remoteLabels={unchecked:'云端尚未检测',deployed:'检测到云端服务已部署',not_deployed:'尚未部署云端服务',partial:'云端服务部署不完整',unreachable:'暂时无法检测云端服务'};
+    verifying:'验证服务',ready:'云端服务已就绪',degraded:'云端服务不可用',
+    authorization_required:'需要授权 Cloudflare 才能检测',verification_unavailable:'云端状态无法验证',
+    already_deployed:'云端已部署，但本机尚未关联',not_initialized:'确认尚未初始化',
+    failed:'云端初始化失败'};
+  const remoteLabels={unchecked:'云端尚未检测',checking:'正在检测云端服务',deployed:'检测到云端服务已部署',not_deployed:'已确认云端服务未部署',partial:'云端服务部署不完整',unreachable:'云端连接异常，初始化状态未知'};
   const setupChoice=(element,items,render,selected,defaultLabel)=>{
     const signature=JSON.stringify(items);
     if(element.dataset.signature!==signature){
@@ -50,7 +53,14 @@
       ' · '+remoteLabel+(cloud.error?'：'+cloud.error:'')+
       (cloud.remote==='deployed'&&!cloud.hasOwnerKey?
         ' · '+t('本机尚未保存所有者密钥，不能直接覆盖云端服务'):'');
-    cloudSetupStart.disabled=Boolean(cloud.busy)||(cloud.remote==='deployed'&&!cloud.hasOwnerKey);
+    const remote=cloud.remote;
+    cloudSetupStart.disabled=Boolean(cloud.busy)||remote==='deployed'||
+      remote==='unreachable'||(remote==='partial'&&!cloud.hasOwnerKey);
+    cloudSetupStart.textContent=t(remote==='deployed'?
+      (cloud.hasOwnerKey?'云端服务已初始化':'云端已部署（需关联）'):
+      remote==='partial'&&cloud.hasOwnerKey?'修复云端服务':
+      cloud.phase==='authorization_required'?'授权并检查云端服务':
+      '初始化云端服务');
     cloudSetupRefresh.disabled=Boolean(cloud.busy);
     cloudSetupCopyKey.hidden=!cloud.hasOwnerKey;
     setupChoice(cloudAccountSelect,cloud.accountOptions||[],a=>a.name,
