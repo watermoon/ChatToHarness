@@ -827,3 +827,12 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] 定向 OAuth/路由/配对测试及双 Worker dry-run 编译通过。
 - [ ] OAuth 真实浏览器授权、ChatGPT 单插件与三设备联调仍待验收；本轮不部署云端。
 - [ ] 初版 Workerd 使用 owner:v1 导致授权 500，定位为 SDK 禁止冒号，修改后完整 OAuth E2E 尚待再次执行。
+
+### 2026-10-27 方案 B — Cloudflare 正式部署验证
+
+- [x] 已部署 `chattoharness-auth` Worker 至 `https://chattoharness-auth.watermoon3322.workers.dev`，Cloudflare 版本 `f807add3-a365-42c5-9027-08d3c95f0bd3`。
+- [x] 已部署 `chattoharness-cloud-router` Worker 至 `https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp`，Cloudflare 版本 `0d3b8793-9e9b-4240-9f85-85f797a5d9dd`。
+- [x] Auth Worker 已绑定实际 OAuth KV；Owner Key 已通过 Cloudflare Worker Secret 配置，Mac 本地副本在 Keychain（密钥从未提交或在聊天中显示）。
+- [x] 真实公网：OAuth Discovery 200、PKCE S256、MCP Resource Metadata 200、无 Token MCP 401（含 OAuth challenge）、错误 Owner Key 403、正确 Owner Key 授权码 302、Token 换取成功、带 Token 调用 MCP `tools/list` 成功。
+- [ ] ChatGPT 插件实际安装授权、`list_devices`/`create_pairing_code` 对 Durable Object 的在线调用、Mac/Windows 真机一次性配对和三设备并发均待验收，不能据此宣称全部迁移完成。
+- [ ] 设备撤销、重新配对、生产限流和远程高级工具权限仍为后续任务；既有三个 Tunnel 保留正常使用。
