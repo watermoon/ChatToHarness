@@ -67,4 +67,15 @@ async function discoverCloudflare({fetcher,tokenOutput,accountId='',kvId=''}) {
   return {needs:null,accounts,accountId:selected,subdomain:sub,
     kvId:kvId||options[0]?.id||'',kvOptions:options};
 }
-module.exports={headersFromWrangler,oauthNamespaces,discoverCloudflare};
+// An authenticated list is the only basis for declaring Workers definitely absent.
+// An HTTP 404 at a public workers.dev URL is NOT proof of non-initialization.
+async function inspectWorkerScripts({fetcher,tokenOutput,accountId}) {
+  if(!ACCOUNT_ID.test(accountId))throw Error('CLOUD_ACCOUNT_NOT_FOUND');
+  const body=await getCloudflare(fetcher,headersFromWrangler(tokenOutput),
+    'accounts/'+accountId+'/workers/scripts');
+  if(!Array.isArray(body.result)||Number(body.result_info?.total_pages||1)>1)
+    throw Error('CLOUD_WORKER_LIST_INCOMPLETE');
+  const ids=new Set(body.result.map(x=>x?.id).filter(x=>typeof x==='string'));
+  return {auth:ids.has('chattoharness-auth'),router:ids.has('chattoharness-cloud-router')};
+}
+module.exports={headersFromWrangler,oauthNamespaces,discoverCloudflare,inspectWorkerScripts};
