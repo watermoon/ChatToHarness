@@ -818,3 +818,12 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] 打包版 UI 冒烟 `npm run smoke:ui` 通过，覆盖 zh-CN/en/ja、导航、重启连接、加密配置等流程。第一次失败因英文配对文案未翻译，补齐后复验通过。
 - [ ] 尚未实际上线 Cloudflare Workers/Access，不具备正式单插件接入能力；需要真实域名、KV、Access 邮箱白名单和在线授权，以及 Windows/macOS 真机并发验收。
 - [ ] 实际配对后设备撤销/重置、云端限流和 WebSocket Hibernation 的在线验收仍待实现；保持旧三个 Tunnel 原状。
+
+## 2026-10-27 Cloud Router P3/P4 Self-hosted owner authorization 方案 B
+
+- [x] 不依赖 Zero Trust Access/GitHub；所有者授权密钥为 256-bit 随机 Worker Secret，不公开、不提交。
+- [x] OWNER_AUTH_EPOCH 两个 Worker 一致，用于旧 OAuth 授权作废。OAuth Provider 1.2.x 不接受带冒号的 userId，已改为 cth-owner-v1。
+- [x] 保留用户已填写的真实 workers.dev 服务地址及 KV ID；删除邮箱白名单；设备配对机制独立。
+- [x] 定向 OAuth/路由/配对测试及双 Worker dry-run 编译通过。
+- [ ] OAuth 真实浏览器授权、ChatGPT 单插件与三设备联调仍待验收；本轮不部署云端。
+- [ ] 初版 Workerd 使用 owner:v1 导致授权 500，定位为 SDK 禁止冒号，修改后完整 OAuth E2E 尚待再次执行。

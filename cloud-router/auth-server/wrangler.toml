@@ -1,16 +1,17 @@
-# OAuth 2.1 authorization server; Cloudflare Access protects ONLY /authorize.
-# Configure Cloudflare Zero Trust self-hosted Access application for auth host /authorize.
+# Self-hosted OAuth 2.1 authorization; OWNER_AUTH_KEY is a secret; never commit its value.
 name = "chattoharness-auth"
 main = "index.mjs"
 compatibility_date = "2026-10-26"
 compatibility_flags = ["global_fetch_strictly_public"]
-workers_dev = false
+workers_dev = true
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "REPLACE_WITH_REAL_KV_ID"
+id = "bb07437c5db0448888758cd0029f9e75"
 
 [vars]
-OAUTH_ISSUER = "https://auth.example.invalid"
-MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
-ACCESS_ALLOWED_EMAILS = ""
+OAUTH_ISSUER = "https://chattoharness-auth.watermoon3322.workers.dev"
+MCP_RESOURCE_URL = "https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp"
+OWNER_AUTH_EPOCH = "v1"
+
+# Set OWNER_AUTH_KEY with: npx wrangler secret put OWNER_AUTH_KEY -c auth-server/wrangler.toml

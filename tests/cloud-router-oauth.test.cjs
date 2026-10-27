@@ -4,46 +4,53 @@ const assert=require('node:assert/strict');
 const {resolve}=require('node:path');
 const {pathToFileURL}=require('node:url');
 const policy=()=>import(pathToFileURL(resolve(__dirname,'../cloud-router/src/oauth-policy.mjs')).href);
-test('OAuth access is bound to a verified Cloudflare Access subject and email allowlist',async()=>{
- const {authorizedIdentity}=await policy();
- const env={ACCESS_ALLOWED_EMAILS:'owner@example.com,other@example.org'};
- const valid={props:{accessEmail:'owner@example.com'},auth:{userId:'cloudflare-access:owner@example.com',scope:['mcp:read']}};
+const SECRET='0123456789abcdef'.repeat(4);
+const env={OWNER_AUTH_EPOCH:'v1'};
+test('resource requires the verified owner subject, consent properties and current authorization epoch',async()=>{
+ const {authorizedIdentity,ownerSubject}=await policy();
+ const valid={props:{ownerAuthorized:true,ownerEpoch:'v1'},auth:{userId:ownerSubject(env),scope:['mcp:read']}};
+ assert.equal(ownerSubject(env),'cth-owner-v1');
+ assert.doesNotMatch(ownerSubject(env),/:/);
  assert.equal(authorizedIdentity(valid,env),true);
- assert.equal(authorizedIdentity({...valid,auth:{userId:'cloudflare-access:other@example.org'}},env),false);
- assert.equal(authorizedIdentity({...valid,props:{accessEmail:'bad@example.com'}},env),false);
- assert.equal(authorizedIdentity(valid,{ACCESS_ALLOWED_EMAILS:''}),false);
- assert.equal(authorizedIdentity(valid,{ACCESS_ALLOWED_EMAILS:'other@example.org'}),false);
- assert.equal(authorizedIdentity({auth:valid.auth},env),false);
+ assert.equal(authorizedIdentity({...valid,auth:{userId:'github:123'}},env),false);
+ assert.equal(authorizedIdentity({...valid,auth:{userId:'cloudflare-access:owner@example.com'}},env),false);
+ assert.equal(authorizedIdentity({...valid,props:{ownerAuthorized:'true',ownerEpoch:'v1'}},env),false);
+ assert.equal(authorizedIdentity({...valid,props:{ownerAuthorized:true}},env),false);
+ assert.equal(authorizedIdentity(valid,{OWNER_AUTH_EPOCH:'v2'}),false,'rotated epoch revokes old user');
+ assert.equal(authorizedIdentity(valid,{}),false);
+ assert.equal(authorizedIdentity({},env),false);
+ assert.equal(ownerSubject({OWNER_AUTH_EPOCH:'../x'}),null);
 });
-test('email allowlist normalizes case, rejects invalid identity or matching suffix',async()=>{
- const {allowlistedAccessEmail,normalizedAccessEmail}=await policy();
- const env={ACCESS_ALLOWED_EMAILS:'Owner@Example.com, second@example.org'};
- assert.equal(allowlistedAccessEmail(env,'OWNER@example.com'),true);
- assert.equal(allowlistedAccessEmail(env,'second@example.org'),true);
- for(const value of ['owner@example.com.evil','another@example.com',' owner@example.com','bad',null,undefined,''])
-  assert.equal(allowlistedAccessEmail(env,value),false,String(value));
- assert.equal(normalizedAccessEmail('Owner@Example.com'),'owner@example.com');
+test('owner secret must be a 256-bit random hexadecimal value set in the auth Worker Secret',async()=>{
+ const {ownerSecretConfigured,verifyOwnerSecret}=await policy();
+ assert.equal(ownerSecretConfigured({}),false);
+ assert.equal(ownerSecretConfigured({OWNER_AUTH_KEY:'password'}),false);
+ assert.equal(ownerSecretConfigured({OWNER_AUTH_KEY:'f'.repeat(63)}),false);
+ assert.equal(ownerSecretConfigured({OWNER_AUTH_KEY:SECRET}),true);
+ for(const bad of ['','password',null,undefined,'f'.repeat(64),'X'+SECRET.slice(1),'0'.repeat(63),SECRET+'0'])
+   assert.equal(await verifyOwnerSecret(bad,{OWNER_AUTH_KEY:SECRET}),false);
+ assert.equal(await verifyOwnerSecret(SECRET,{}),false);
+ assert.equal(await verifyOwnerSecret(SECRET,{OWNER_AUTH_KEY:SECRET}),true);
 });
-test('unauthenticated and forged CF Access headers cannot grant access',async()=>{
- const {authenticatedAccessUser}=await policy();
- const env={ACCESS_ALLOWED_EMAILS:'owner@example.com'};
- assert.equal(await authenticatedAccessUser(undefined,env),null);
- assert.equal(await authenticatedAccessUser({headers:{'cf-access-authenticated-user-email':'owner@example.com'}},env),null);
- assert.equal(await authenticatedAccessUser({getIdentity:async()=>{throw Error('invalid');}},env),null);
- assert.equal(await authenticatedAccessUser({getIdentity:async()=>({email:'attacker@example.com'})},env),null);
- assert.deepEqual(await authenticatedAccessUser({getIdentity:async()=>({email:'OWNER@example.com'})},env),
-  {email:'owner@example.com',userId:'cloudflare-access:owner@example.com'});
+test('forged Cloudflare Access identity, headers or guessed subject cannot grant access',async()=>{
+ const {authorizedIdentity}=await policy();
+ for(const forged of [
+   {headers:{'cf-access-authenticated-user-email':'owner@example.com'}},
+   {props:{accessEmail:'owner@example.com'},auth:{userId:'cloudflare-access:owner@example.com'}},
+   {props:{ownerAuthorized:true},auth:{userId:'cth-owner-v1'}},
+   {props:{ownerAuthorized:true,ownerEpoch:'v1'},auth:{userId:'cth-owner-v2'}},
+ ])assert.equal(authorizedIdentity(forged,env),false);
 });
-test('OAuth canonical URLs allow loopback testing but refuse public cleartext and audience mismatch',async()=>{
+test('OAuth canonical URLs allow loopback tests but refuse public cleartext and wrong audiences',async()=>{
  const {canonical}=await policy();
  assert.equal(canonical('https://mcp.example.com/mcp','/mcp'),'https://mcp.example.com/mcp');
  assert.equal(canonical('https://auth.example.com/','/'),'https://auth.example.com');
  assert.equal(canonical('http://127.0.0.1:8842/mcp','/mcp'),'http://127.0.0.1:8842/mcp');
  for(const u of ['http://mcp.example.com/mcp','https://x:y@mcp.example.com/mcp',
   'https://mcp.example.com/mcp?key=x','https://mcp.example.com/mcp#x','https://mcp.example.com/other'])
-  assert.throws(()=>canonical(u,'/mcp'),/OAUTH_CONFIG_REQUIRED/);
+   assert.throws(()=>canonical(u,'/mcp'),/OAUTH_CONFIG_REQUIRED/);
 });
-test('consent page HTML escape prevents injection in untrusted client metadata',async()=>{
+test('consent HTML escaping prevents untrusted client metadata injection',async()=>{
  const {htmlEscape}=await policy();
  assert.equal(htmlEscape('<img src=x onerror="a()">'),'&#60;img src=x onerror=&#34;a()&#34;&#62;');
 });

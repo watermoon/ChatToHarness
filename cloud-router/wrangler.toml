@@ -3,7 +3,7 @@ name = "chattoharness-cloud-router"
 main = "src/secure-worker.mjs"
 compatibility_date = "2026-10-26"
 compatibility_flags = ["global_fetch_strictly_public"]
-workers_dev = false
+workers_dev = true
 
 [[durable_objects.bindings]]
 name = "DEVICE_HUB"
@@ -19,6 +19,8 @@ service = "chattoharness-auth"
 
 [vars]
 ALLOWED_TOOLS = "get_harness_status"
-MCP_RESOURCE_URL = "https://mcp.example.invalid/mcp"
-OAUTH_ISSUER = "https://auth.example.invalid"
-ACCESS_ALLOWED_EMAILS = ""
+MCP_RESOURCE_URL = "https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp"
+OAUTH_ISSUER = "https://chattoharness-auth.watermoon3322.workers.dev"
+OWNER_AUTH_EPOCH = "v1"
+
+# OWNER_AUTH_EPOCH must equal the authorization Worker epoch; bump both to revoke previous tokens.

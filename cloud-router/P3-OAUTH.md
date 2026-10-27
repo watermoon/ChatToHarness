@@ -1,28 +1,51 @@
-# Cloudflare Access + OAuth 2.1
+# P3/P4 — Self-hosted ChatToHarness OAuth 2.1 (NO Cloudflare Zero Trust)
 
-This branch no longer needs a GitHub OAuth App or a GitHub sign-in. The human authorizes the single ChatGPT MCP connector through **Cloudflare Access**; devices authenticate separately using an automatically issued device secret after one-time pairing.
+**Status: unit tests and Worker dry-runs verified; complete end-to-end OAuth acceptance still required, NOT production deployed.** There is no Cloudflare Zero Trust, GitHub OAuth App, Cloudflare account member login, or payment-card requirement for the identity flow. OAuth is still mandatory for remote ChatGPT MCP access.
 
-## Identity flow
+## Deployment-specific configuration (real account)
 
-1. Configure one HTTPS OAuth authorization Worker (`chattoharness-auth`) and one HTTPS resource Worker (`chattoharness-cloud-router`).
-2. Set up Cloudflare Zero Trust with an **Access application scoped to the authorization worker's `/authorize` path only**. Choose "Cloudflare account" membership as the IdP and restrict the policy to the intended member(s).
-3. Cloudflare supplies verified `ctx.access.getIdentity()` to the authorization Worker. The Worker also enforces `ACCESS_ALLOWED_EMAILS` (case-insensitive exact match; empty denies everyone).
-4. The authorization Worker uses `@cloudflare/workers-oauth-provider` 1.x for consent, PKCE S256, CIMD/DCR, access tokens and revocation. Discovery, `/oauth/token` and registration must **not** be Access-protected, as non-browser clients need them.
-5. The MCP resource Worker validates bearer tokens against the auth Worker using Service Binding and re-checks the subject/email allowlist. **No plain GitHub, Cloudflare, or ChatGPT browser session is trusted by the resource endpoint.**
-6. A ChatGPT user runs `create_pairing_code` from the authenticated MCP connector, then pastes the one-use code into the new desktop pairing panel. Device token is encrypted with OS `safeStorage` and reused on restart.
+Cloudflare Workers account subdomain: `watermoon3322.workers.dev`.
 
-## Cloudflare configuration needed before deployment
+- Authorization Worker: `https://chattoharness-auth.watermoon3322.workers.dev`
+- Resource Worker: `https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp`
+- The KV namespace has been configured in `auth-server/wrangler.toml`. Confirm ownership in Cloudflare UI.
+- Both files have `workers_dev=true`, `OAUTH_ISSUER`, `MCP_RESOURCE_URL` and identical `OWNER_AUTH_EPOCH = "v1"`. An owner identity is `cth-owner-v1`.
+- Never put an email, plaintext credential, token, or key into either wrangler file.
 
-- Set `OAUTH_ISSUER` and `MCP_RESOURCE_URL` to real matching HTTPS domain URLs in **both** wrangler files.
-- Create OAuth KV and configure `auth-server/wrangler.toml` with its namespace ID.
-- Configure `ACCESS_ALLOWED_EMAILS` to the intended authorized account email(s) in **both** workers. Never use a wildcard or leave empty expecting users to pass.
-- Restrict Cloudflare Access to the authorization `/authorize` path. Do **not** enable Worker-wide Access for the auth or MCP Worker, or you will block OAuth clients and device WebSockets.
-- Deploy the auth Worker first; then deploy the resource Worker with an `AUTH_SERVER` Service Binding.
-- In ChatGPT, install **one** OAuth-protected remote MCP connector at `https://<mcp-host>/mcp`; confirm 401 challenge + `WWW-Authenticate` and metadata, then complete the Access login/consent.
-- Device operations currently remain limited to `get_harness_status` with empty arguments. Shell, file editing, Git writes and Computer Use are not yet permitted through the cloud route.
+## One owner key instead of Cloudflare Access
 
-## Verification limitations
+The authorization page `/authorize` asks the account owner to enter a **256-bit random owner key**. This key MUST be stored as `OWNER_AUTH_KEY` in the **authorization Worker Secret only**, never as a Worker variable, code, Git commit, browser URL, or ChatGPT chat message. The owner key is reusable for future initial authorizations; it is not the per-device pairing code. Anyone who possesses this key can authorize new OAuth clients: back it up securely and don't share it.
 
-Local unit tests and Wrangler dry-run do not prove online Cloudflare Access identity, OAuth token exchange, real WebSockets, or ChatGPT app authorization. Such checks require the actual Cloudflare account/domain, and should be completed in a separate deployment acceptance report. Keep all three existing Secure MCP Tunnel plugins until this passes.
+Generate the key **locally in a trusted terminal** (do not paste it into ChatGPT or commit it):
 
-Details of pairing: [PAIRING.md](PAIRING.md).
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+In `cloud-router/`, first deploy the auth Worker, which **fails closed with HTTP 503** until a valid secret exists, then input the generated key into the interactive secret prompt:
+
+```bash
+npx wrangler deploy --config auth-server/wrangler.toml
+npx wrangler secret put OWNER_AUTH_KEY --config auth-server/wrangler.toml
+npx wrangler deploy
+```
+
+This key must be exactly 64 lowercase hexadecimal characters (256 random bits); the auth endpoint uses constant-time digest comparison. It is submitted as a secure HTTPS POST with a browser-bound consent cookie, protected from clickjacking and referrer leaks. An invalid or absent key cannot authorize a client, and it is never exposed in the authorization page's URL or logs.
+
+## OAuth and MCP verification
+
+- `GET /authorize`: browser login + explicit consent, shows client name, verified publisher domain where available, redirect host and scope.
+- OAuth Provider 1.x: authorization code with PKCE S256, OAuth discovery, CIMD/DCR, KV-backed grants/access/refresh tokens and token revocation.
+- `POST /authorize`: rejects missing/wrong owner key; only authentic credentials can call `approveConsent` and `completeAuthorization`.
+- `chattoharness-cloud-router`: private service binding validates token expiration, resource audience and scopes, then checks `cth-owner-v1` subject. An anonymous `POST /mcp` must return 401 with resource-metadata `WWW-Authenticate`.
+- `/agent`: a different WebSocket identity flow using per-device keys. Pairing requires a short-lived random code generated by the **authorized** MCP user; see [PAIRING.md](PAIRING.md).
+
+## Rotation and revocation
+
+Changing the `OWNER_AUTH_KEY` Worker Secret stops new authorizations using the old key, **but does not automatically revoke tokens already issued**. To invalidate all previously issued access/refresh tokens, update `OWNER_AUTH_EPOCH` to the **same new value in both Workers**, redeploy both, and re-authorize your ChatGPT connector. Revoke individual OAuth grants/tokens when possible. Rotating the owner key does not revoke already paired device keys; those need separate device revocation.
+
+## Checks and remaining risks
+
+From repo root run `npm test`; from `cloud-router/` run `npm run check` (dry-run only). Test the real Cloudflare endpoint in a separate acceptance step: KV binding, secret, consent cookie, wrong-key rejection, OAuth callback/PKCE, refresh, revocation, token audience, and device pairing. Rate limit the public authorization and pairing endpoints prior to wider use; long-lived owner key is a high-value recovery credential. No remote Shell/files/Computer Use is available yet; allowlist remains `get_harness_status`.
+
+The three existing Secure MCP Tunnel plugins remain in place until real multi-device acceptance.

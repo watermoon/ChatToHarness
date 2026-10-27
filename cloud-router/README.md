@@ -1,25 +1,15 @@
 # ChatToHarness Multi-Device Cloud Router
 
-**Status: development branch; not deployed to Cloudflare and not verified with a real ChatGPT connector.** Existing HomeWinHarness, WinHarness and MacHarness tunnels remain unchanged.
+**Status: development branch. Workers not yet production deployed; a real ChatGPT single-connector and multi-device acceptance remains pending.** All existing legacy Secure MCP Tunnels remain unaffected.
 
-The goal is ONE ChatGPT remote MCP connector with live device discovery, explicit device routing and automatic reconnection on Windows/macOS, using Cloudflare Workers + Durable Objects.
+Architecture: one remote MCP connector to `/mcp` through an OAuth-protected Resource Worker; a separate authorization Worker runs self-hosted owner-key OAuth 2.1 backed by KV (no Zero Trust or GitHub); Durable Object manages device pairing, online presence and exact device routing. Desktop OS safeStorage encrypts each device credential locally.
 
-## Components
+Expected URLs:
+- OAuth issuer: `https://chattoharness-auth.watermoon3322.workers.dev`
+- MCP: `https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp`
 
-- `src/secure-worker.mjs`: OAuth-protected remote MCP resource. The public `/mcp` endpoint requires a Cloudflare Access-backed OAuth token (validated using the auth Worker service binding).
-- `auth-server/index.mjs`: OAuth Provider 1.x; **Cloudflare Access** signs in the authorized user at `/authorize`. No GitHub OAuth App or GitHub login.
-- `src/worker.mjs` + `src/pairing.mjs`: Durable Object device presence, secure one-time pairing, per-device credentials, exact routing and safe failure responses.
-- Desktop `app/cloud-router-service.cjs` + `app/cloud-router-pairing.cjs`: first pairing through local UI, credential encryption via Electron safeStorage, reconnect on startup.
+MCP tools: `create_pairing_code`, `list_devices`, `call_device_tool`. Remotely permitted device tool: **`get_harness_status` only**. No Shell, file write, Git write or Computer Use until explicit later authorization and real acceptance.
 
-ChatGPT tool names: `create_pairing_code`, `list_devices`, `call_device_tool`. Only `get_harness_status` is allowed remotely in this stage. Remote shell/files/Computer Use are explicitly denied.
+Setup: [P3-OAUTH.md](P3-OAUTH.md). One-time pairing: [PAIRING.md](PAIRING.md).
 
-## Running tests
-
-From repo root: `npm test`.
-From `cloud-router/`: `npm ci && npm run check`. This compiles both Workers with Wrangler **without deploying**.
-
-## Setup
-
-See [P3-OAUTH.md](P3-OAUTH.md) for the Cloudflare Access + OAuth configuration and [PAIRING.md](PAIRING.md) for pairing UX, security and acceptance criteria.
-
-Real Cloudflare account, HTTPS domains, OAuth KV and authorization policies are prerequisites for P4 deployment. Do not switch off the three existing Tunnel plugins before genuine end-to-end approval.
+Check code with `npm test` (repo root) and `npm run check` (`cloud-router/`). A successful dry-run does **not** mean a Worker was deployed or ChatGPT is authenticated.

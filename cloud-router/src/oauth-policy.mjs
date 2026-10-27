@@ -1,40 +1,33 @@
-// Security policies shared by the OAuth authorization and MCP resource Workers.
-// Never infer Cloudflare Access identity from unverified HTTP headers or cookies.
+// Shared rules for our single-owner OAuth authorization and MCP resource Workers.
+// No Cloudflare Access, GitHub account, or user-controlled authentication headers.
 export const htmlEscape = value => String(value).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+export function ownerSubject(env) {
+  const epoch=env?.OWNER_AUTH_EPOCH;
+  // OAuth Provider 1.2.x rejects ':' in userId; keep this subject colon-free.
+  return typeof epoch==='string' && /^[A-Za-z0-9_-]{1,32}$/.test(epoch) ? 'cth-owner-'+epoch : null;
+}
+const HEX_SECRET = /^[a-f0-9]{64}$/;
 
-export function normalizedAccessEmail(email) {
-  if (typeof email !== 'string' || email.length < 3 || email.length > 254 ||
-      email !== email.trim() || /[\s\x00-\x1f\x7f]/.test(email) ||
-      !/^[^@]+@[^@]+\.[^@]+$/.test(email)) return null;
-  return email.toLowerCase();
+export function ownerSecretConfigured(env) {
+  return typeof env?.OWNER_AUTH_KEY === 'string' && HEX_SECRET.test(env.OWNER_AUTH_KEY);
 }
 
-export function allowlistedAccessEmail(env, email) {
-  const normalized = normalizedAccessEmail(email);
-  if (!normalized) return false;
-  const allowed = String(env?.ACCESS_ALLOWED_EMAILS || '').split(',')
-    .map(value => normalizedAccessEmail(value.trim())).filter(Boolean);
-  // An empty allowlist always denies. Cloudflare account membership must ALSO be
-  // enforced by the Access policy protecting the /authorize hostname/path.
-  return allowed.includes(normalized);
+export async function verifyOwnerSecret(candidate,env) {
+  // Only a randomly-generated 256-bit credential is acceptable, never a weak password.
+  if (!ownerSecretConfigured(env) || typeof candidate !== 'string' || !HEX_SECRET.test(candidate)) return false;
+  const encode = new TextEncoder();
+  const [actual, expected] = await Promise.all([candidate,env.OWNER_AUTH_KEY]
+    .map(s=>crypto.subtle.digest('SHA-256',encode.encode(s))));
+  const a=new Uint8Array(actual), b=new Uint8Array(expected);
+  let diff=0;
+  for(let i=0;i<a.length;i++) diff|=a[i]^b[i];
+  return diff===0;
 }
 
-export function authorizedIdentity(ctx, env) {
-  const email = normalizedAccessEmail(ctx?.props?.accessEmail);
-  return Boolean(email && allowlistedAccessEmail(env,email) &&
-    ctx?.auth?.userId === 'cloudflare-access:' + email);
-}
-
-export async function authenticatedAccessUser(accessContext, env) {
-  if (!accessContext || typeof accessContext.getIdentity !== 'function') return null;
-  let identity;
-  try { identity = await accessContext.getIdentity(); }
-  catch { return null; }
-  const email = normalizedAccessEmail(identity?.email);
-  if (!email || !allowlistedAccessEmail(env,email)) return null;
-  // Cloudflare Access is the only identity authority. No request-provided user
-  // ID, CF-Access header, JWT payload or GitHub identifier is trusted here.
-  return {email, userId: 'cloudflare-access:' + email};
+export function authorizedIdentity(ctx,env) {
+  const subject=ownerSubject(env);
+  return Boolean(subject && ctx?.auth?.userId === subject &&
+    ctx?.props?.ownerAuthorized === true && ctx?.props?.ownerEpoch === env.OWNER_AUTH_EPOCH);
 }
 
 export function canonical(value, expectedPath) {
