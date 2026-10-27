@@ -27,6 +27,8 @@ function scenario() {
      result=[{id:'b'.repeat(32),name:'Test account'}];
    else if(url.includes('/workers/subdomain'))result={subdomain:'watermoon3322'};
    else if(url.includes('/storage/kv/namespaces'))result=[];
+    else if(url.endsWith('/workers/scripts'))result=deployed?
+      [{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]:[];
    else throw Error('MOCK_UNEXPECTED_API_REQUEST');
    return {status:200,json:async()=>({success:true,result})};
   }
@@ -58,12 +60,14 @@ test('one click provisions KV, encrypts 256-bit owner key, deploys Workers and c
  assert.match(s.inputs[0],/^[a-f0-9]{64}$/);
  assert.equal(JSON.stringify(r).includes(s.inputs[0]),false);
  assert.equal(fs.readFileSync(path.join(s.home,'cloudflare-bootstrap','credentials.json'),'utf8').includes(s.inputs[0]),false);
- assert.equal(s.fetchCalls.length,5); // discovery: 3 endpoints; deployment verification: 2
+ assert.equal(s.fetchCalls.length,6); // 3 preflight + 3 post-deployment live probes
  assert.ok(s.calls.some(x=>x[0]==='deploy'));
  const clipboard={writeText(v){assert.equal(v,s.inputs[0]);}};
  assert.deepEqual(s.bootstrap.copyOwnerKey(clipboard),{copied:true});
  const second=new CloudBootstrap({home:s.home,safeStorage:encryption,nodePath:process.execPath,sourceDir:source,
    runner:s.bootstrap.runner,fetcher:s.bootstrap.fetcher});
+ assert.equal(second.status().ready,false); // Do not trust the saved completion flag without live verification.
+ await second.preview();
  assert.equal(second.status().ready,true);
  assert.equal(second.ownerKey(),s.inputs[0]);
 });
@@ -74,7 +78,10 @@ test('invalid encryption and failed verification fail closed',async(t)=>{
  assert.equal(a.calls.length,0);
  const b=scenario();t.after(()=>fs.rmSync(b.home,{recursive:true,force:true}));
  const originalFetcher=b.bootstrap.fetcher;
- b.bootstrap.fetcher=(url,opts)=>url.includes('api.cloudflare.com/')?originalFetcher(url,opts):Promise.resolve({status:200});
+ b.bootstrap.fetcher=async(url,opts)=>{
+   const response=await originalFetcher(url,opts);
+   return url.endsWith('/mcp')&&response.status===401?{status:200}:response;
+ };
  const res=await b.bootstrap.init({subdomain:'watermoon3322',existingKvId:kvId});
  assert.equal(res.phase,'failed');
  assert.equal(res.error,'CLOUD_REMOTE_VERIFICATION_FAILED');
@@ -89,7 +96,8 @@ test('readonly cloud detection reports deployed service without overwriting miss
    if(url.includes('api.cloudflare.com/'))return (await Promise.resolve({
      status:200,json:async()=>({success:true,result:
        url.endsWith('accounts?per_page=100')?[{id:'b'.repeat(32),name:'Test'}]:
-       url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:[]})
+       url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:
+       url.endsWith('/workers/scripts')?[{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]:[]})
    }));
    return {status:url.endsWith('/mcp')?401:200};
  };
@@ -106,4 +114,18 @@ test('remote network failure is distinguishable from not deployed',async(t)=>{
  s.bootstrap.fetcher=async()=>{throw Error('network unavailable');};
  assert.equal(await s.bootstrap.checkRemote('watermoon3322'),'unreachable');
  assert.equal(s.bootstrap.status().remote,'unreachable');
+});
+
+test('HTTP 404 alone cannot prove service is absent; authenticated inventory can',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ assert.equal(await s.bootstrap.checkRemote('watermoon3322',null),'unreachable');
+ assert.equal(await s.bootstrap.checkRemote('watermoon3322',{auth:false,router:false}),'not_deployed');
+});
+test('checking without Cloudflare login never falsely reports an uninitialized deployment',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.cli=async()=>{throw Error('CLOUD_LOGIN_REQUIRED');};
+ const state=await s.bootstrap.preview();
+ assert.equal(state.phase,'authorization_required');
+ assert.equal(state.remote,'unchecked');
+ assert.equal(state.ready,false);
 });
