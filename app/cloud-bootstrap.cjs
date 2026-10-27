@@ -163,7 +163,7 @@ class CloudBootstrap {
    this.phaseSet(found.needs==='account'?'choose_account':
      found.needs==='kv'?'choose_kv':
      this.remote==='deployed'?
-       (this.record?.encryptedKey?'ready':'already_deployed'):
+       (!this.record?.encryptedKey?'already_deployed':this.record.complete?'ready':'recovery_required'):
      this.remote==='not_deployed'?'not_initialized':
      this.remote==='partial'?'degraded':'verification_unavailable');
    return found;
@@ -177,7 +177,8 @@ class CloudBootstrap {
      if(this.record?.subdomain){
        const remote=await this.checkRemote(this.record.subdomain,null);
        if(remote==='deployed'){
-         this.phaseSet(this.record.encryptedKey?'ready':'already_deployed');
+         this.phaseSet(!this.record.encryptedKey?'already_deployed':
+           this.record.complete?'ready':'recovery_required');
        }else this.phaseSet(code==='CLOUD_LOGIN_REQUIRED'?
          'authorization_required':'verification_unavailable',
          code==='CLOUD_LOGIN_REQUIRED'?'':code);
@@ -203,7 +204,7 @@ class CloudBootstrap {
    if(this.remote==='deployed'){
      if(!this.record?.encryptedKey)
        throw Error('CLOUD_ALREADY_DEPLOYED_OWNER_KEY_MISSING');
-     if(!this.record.complete){this.record.complete=true;this.save();}
+     if(!this.record.complete)throw Error('CLOUD_DEPLOYED_KEY_NOT_VERIFIED');
      this.phaseSet('ready');return this.status();
    }
    if(this.remote==='partial'&&!this.record?.encryptedKey)
