@@ -129,3 +129,29 @@ test('checking without Cloudflare login never falsely reports an uninitialized d
  assert.equal(state.remote,'unchecked');
  assert.equal(state.ready,false);
 });
+
+test('unverified stored owner key cannot silently adopt an existing remote deployment',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.record={schema:1,subdomain:'watermoon3322',accountId:'b'.repeat(32),
+   kvId,encryptedKey:encryption.encryptString('a'.repeat(64)).toString('base64'),
+   complete:false};
+ s.bootstrap.fetcher=async(url)=>{
+   if(url.includes('api.cloudflare.com/')){
+     const result=url.endsWith('accounts?per_page=100')?
+       [{id:'b'.repeat(32),name:'Test'}]:
+       url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:
+       url.includes('/storage/kv/namespaces')?[{id:kvId,title:'OAUTH_KV'}]:
+       url.endsWith('/workers/scripts')?
+         [{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]:[];
+     return {status:200,json:async()=>({success:true,result})};
+   }
+   return {status:url.endsWith('/mcp')?401:200};
+ };
+ const preview=await s.bootstrap.preview();
+ assert.equal(preview.phase,'recovery_required');
+ assert.equal(preview.ready,false);
+ const start=await s.bootstrap.init({});
+ assert.equal(start.error,'CLOUD_DEPLOYED_KEY_NOT_VERIFIED');
+ assert.equal(s.bootstrap.record.complete,false);
+ assert.equal(s.calls.filter(x=>x[0]==='deploy'||x[0]==='secret').length,0);
+});
