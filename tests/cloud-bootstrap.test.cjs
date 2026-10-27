@@ -10,9 +10,11 @@ const encryption={isEncryptionAvailable:()=>true,
 function scenario() {
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'cth-bootstrap-test-'));
  const calls=[],inputs=[],fetchCalls=[];
+ let deployed=false;
  const runner=async(node,script,args,opts)=>{
   calls.push(args.slice());
   if(args[0]==='secret')inputs.push(opts.input);
+  if(args[0]==='deploy'&&args.includes('--config')&&args.some(x=>String(x).endsWith('router.jsonc')))deployed=true;
   if(args[0]==='auth'&&args[1]==='token')return {code:0,stdout:JSON.stringify({type:'oauth',token:'x'.repeat(64)})};
   if(args[0]==='kv'&&args[2]==='list')return {code:0,stdout:'[]'};
   if(args[0]==='kv'&&args[2]==='create')return {code:0,stdout:'{"id":"'+kvId+'"}'};
@@ -29,7 +31,7 @@ function scenario() {
    return {status:200,json:async()=>({success:true,result})};
   }
   fetchCalls.push({url,opts});
-  return {status:url.includes('.workers.dev/mcp')?401:200};
+  return {status:deployed?(url.includes('.workers.dev/mcp')?401:200):404};
  };
  const bootstrap=new CloudBootstrap({home,safeStorage:encryption,nodePath:process.execPath,sourceDir:source,runner,fetcher});
  return {home,calls,inputs,fetchCalls,bootstrap};
@@ -56,7 +58,7 @@ test('one click provisions KV, encrypts 256-bit owner key, deploys Workers and c
  assert.match(s.inputs[0],/^[a-f0-9]{64}$/);
  assert.equal(JSON.stringify(r).includes(s.inputs[0]),false);
  assert.equal(fs.readFileSync(path.join(s.home,'cloudflare-bootstrap','credentials.json'),'utf8').includes(s.inputs[0]),false);
- assert.equal(s.fetchCalls.length,2);
+ assert.equal(s.fetchCalls.length,5); // discovery: 3 endpoints; deployment verification: 2
  assert.ok(s.calls.some(x=>x[0]==='deploy'));
  const clipboard={writeText(v){assert.equal(v,s.inputs[0]);}};
  assert.deepEqual(s.bootstrap.copyOwnerKey(clipboard),{copied:true});
@@ -78,4 +80,30 @@ test('invalid encryption and failed verification fail closed',async(t)=>{
  assert.equal(res.error,'CLOUD_REMOTE_VERIFICATION_FAILED');
  assert.equal(res.ready,false);
  assert.equal(b.inputs.length,1);
+});
+
+
+test('readonly cloud detection reports deployed service without overwriting missing local key',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.fetcher=async(url,opts)=>{
+   if(url.includes('api.cloudflare.com/'))return (await Promise.resolve({
+     status:200,json:async()=>({success:true,result:
+       url.endsWith('accounts?per_page=100')?[{id:'b'.repeat(32),name:'Test'}]:
+       url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:[]})
+   }));
+   return {status:url.endsWith('/mcp')?401:200};
+ };
+ const discovered=await s.bootstrap.preview();
+ assert.equal(discovered.remote,'deployed');
+ assert.equal(discovered.hasOwnerKey,false);
+ const deployed=await s.bootstrap.init({});
+ assert.equal(deployed.phase,'failed');
+ assert.equal(deployed.error,'CLOUD_ALREADY_DEPLOYED_OWNER_KEY_MISSING');
+ assert.equal(s.calls.filter(x=>x[0]==='secret'||x[0]==='deploy').length,0);
+});
+test('remote network failure is distinguishable from not deployed',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.fetcher=async()=>{throw Error('network unavailable');};
+ assert.equal(await s.bootstrap.checkRemote('watermoon3322'),'unreachable');
+ assert.equal(s.bootstrap.status().remote,'unreachable');
 });

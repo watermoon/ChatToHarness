@@ -60,6 +60,7 @@ class CloudBootstrap {
   this.dir=path.join(home,'cloudflare-bootstrap');
   this.file=path.join(this.dir,'credentials.json');
   this.phase='idle';this.error='';this.busy=false;
+  this.remote='unchecked';this.remoteCheckedAt=null;
   this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
   this.selectedKvId='';
   this.record=this.read();if(this.record?.complete)this.phase='ready';
@@ -79,7 +80,8 @@ class CloudBootstrap {
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
   kvId:this.selectedKvId||this.record?.kvId,
   mcp_url:this.record?urls(this.record.subdomain).mcp:'',
-  hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready'};}
+  remote:this.remote,remoteCheckedAt:this.remoteCheckedAt,
+  hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready' && this.remote!=='partial' && this.remote!=='not_deployed' && this.remote!=='unreachable'};}
  phaseSet(p,e=''){this.phase=p;this.error=e;this.onChange();}
  save(){fs.mkdirSync(this.dir,{recursive:true,mode:0o700});atomic(this.file,this.record);}
  ownerKey(){
@@ -104,6 +106,23 @@ class CloudBootstrap {
   atomic(b,config(this.sourceDir,s,kv,'router',accountId));
   return {auth:a,router:b};
  }
+ async checkRemote(s) {
+   if(!SUB.test(s)){this.remote='unchecked';return this.remote;}
+   const {auth,mcp}=urls(s);
+   try {
+     const [metadata,health,unauthorized]=await Promise.all([
+       this.fetcher(auth+'/.well-known/oauth-authorization-server',
+         {signal:AbortSignal.timeout(12000)}),
+       this.fetcher(new URL('/health',mcp).href,{signal:AbortSignal.timeout(12000)}),
+       this.fetcher(mcp,{method:'GET',signal:AbortSignal.timeout(12000)})
+     ]);
+     this.remote=metadata.status===200&&health.status===200&&unauthorized.status===401?
+       'deployed':metadata.status===404&&health.status===404?'not_deployed':'partial';
+   }catch{this.remote='unreachable';}
+   this.remoteCheckedAt=Date.now();
+   this.onChange();
+   return this.remote;
+ }
  async findOptions(input={},allowLogin=false){
    this.phaseSet('discovering');
    let token;
@@ -123,14 +142,17 @@ class CloudBootstrap {
    this.discoveredAccountId=found.accountId||'';
    this.discoveredSubdomain=found.subdomain||'';
    this.selectedKvId=found.kvId||'';
+   if(found.subdomain)await this.checkRemote(found.subdomain);
    this.phaseSet(found.needs==='account'?'choose_account':
-     found.needs==='kv'?'choose_kv':this.record?.complete?'ready':'selection_ready');
+     found.needs==='kv'?'choose_kv':this.record?.complete?
+       (this.remote==='deployed'?'ready':'degraded'):'selection_ready');
    return found;
  }
  async preview(input={}){
    if(this.busy)return this.status();
    this.busy=true;this.onChange();
-   try{await this.findOptions(input,false);}
+   try{if(this.record?.subdomain)await this.checkRemote(this.record.subdomain);
+     await this.findOptions(input,false);}
    catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_DISCOVERY_FAILED').split(':')[0]);}
    finally{this.busy=false;this.onChange();}
    return this.status();
@@ -146,6 +168,12 @@ class CloudBootstrap {
      return this.status();
    }
    const s=subdomain(found.subdomain),accountId=found.accountId;
+   if(this.remote==='deployed' && !this.record?.encryptedKey)
+     throw Error('CLOUD_ALREADY_DEPLOYED_OWNER_KEY_MISSING');
+   if(this.remote==='deployed' && this.record?.complete){
+     this.phaseSet('ready');
+     return this.status();
+   }
    if(this.record&&this.record.subdomain!==s)throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
    let kv=found.kvId;
    this.phaseSet('configuring');

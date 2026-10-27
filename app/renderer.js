@@ -23,7 +23,8 @@
     choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',selection_ready:'配置已识别',
     configuring:'准备部署配置',creating_kv:'准备 KV 存储',deploying_auth:'部署授权服务',
     setting_secret:'安全设置所有者密钥',deploying_router:'部署 MCP 服务',
-    verifying:'验证服务',ready:'云端服务已就绪',failed:'云端初始化失败'};
+    verifying:'验证服务',ready:'云端服务已就绪',degraded:'云端服务不可用',failed:'云端初始化失败'};
+  const remoteLabels={unchecked:'云端尚未检测',deployed:'检测到云端服务已部署',not_deployed:'尚未部署云端服务',partial:'云端服务部署不完整',unreachable:'暂时无法检测云端服务'};
   const setupChoice=(element,items,render,selected,defaultLabel)=>{
     const signature=JSON.stringify(items);
     if(element.dataset.signature!==signature){
@@ -44,9 +45,12 @@
   const updateCloudSetupStatus=state=>{
     const cloud=state?.cloudBootstrap;
     if(!cloud)return;
+    const remoteLabel=t(remoteLabels[cloud.remote]||'云端尚未检测');
     cloudSetupStatus.textContent=t(cloudPhaseLabels[cloud.phase]||'尚未初始化')+
-      (cloud.error?'：'+cloud.error:'');
-    cloudSetupStart.disabled=Boolean(cloud.busy);
+      ' · '+remoteLabel+(cloud.error?'：'+cloud.error:'')+
+      (cloud.remote==='deployed'&&!cloud.hasOwnerKey?
+        ' · '+t('本机尚未保存所有者密钥，不能直接覆盖云端服务'):'');
+    cloudSetupStart.disabled=Boolean(cloud.busy)||(cloud.remote==='deployed'&&!cloud.hasOwnerKey);
     cloudSetupRefresh.disabled=Boolean(cloud.busy);
     cloudSetupCopyKey.hidden=!cloud.hasOwnerKey;
     setupChoice(cloudAccountSelect,cloud.accountOptions||[],a=>a.name,
@@ -91,24 +95,52 @@
   const cloudDevicesList=byId('cloud-device-list');
   const cloudDevicesStatus=byId('cloud-devices-status');
   const cloudDevicesRefresh=byId('cloud-devices-refresh');
+  const cloudDevicePicker=byId('cloud-device-picker');
+  const cloudDeviceSelected=byId('cloud-device-selected');
+  const cloudCurrentDevice=byId('cloud-current-device');
+  let selectedCloudDeviceId='';
   const displayCloudDevices=cloud=>{
     if(!cloud)return;
     cloudDevicesRefresh.disabled=Boolean(cloud.devicesRefreshing)||!cloud.paired;
+    const selfName=String(cloud.device_name||'').slice(0,80);
+    const selfId=String(cloud.device_id||'').slice(0,80);
+    cloudCurrentDevice.textContent=t('当前设备')+'：'+
+      (selfName||t('未识别'))+(selfId?' ('+selfId+')':'');
     cloudDevicesList.replaceChildren();
     const devices=Array.isArray(cloud.devices)?cloud.devices:[];
+    if(!devices.some(x=>x.device_id===selectedCloudDeviceId))
+      selectedCloudDeviceId=devices.find(x=>x.device_id===cloud.device_id)?.device_id||
+        devices[0]?.device_id||'';
+    const selected=devices.find(x=>x.device_id===selectedCloudDeviceId);
+    cloudDeviceSelected.textContent=selected?
+      String(selected.name||selected.device_id).slice(0,80):t('选择设备');
     if(!devices.length){
-      const empty=document.createElement('li');empty.textContent=t(cloud.paired?
-        '尚未同步设备清单':'尚未配对设备');cloudDevicesList.append(empty);
+      const empty=document.createElement('li');
+      empty.textContent=t(cloud.paired?'尚未同步设备清单':'尚未配对设备');
+      cloudDevicesList.append(empty);
     }
     for(const device of devices){
       const li=document.createElement('li');li.className='cloud-device-item';
-      const heading=document.createElement('strong');
-      heading.textContent=String(device.name||device.device_id).slice(0,80)+
+      const choice=document.createElement('button');choice.type='button';
+      choice.className='cloud-device-choice';
+      // Collapsed summary is the short device name; expanded choices contain the complete ID.
+      choice.textContent=String(device.name||device.device_id).slice(0,80)+
+        ' ('+String(device.device_id||'').slice(0,80)+')';
+      choice.setAttribute('aria-current',device.device_id===selectedCloudDeviceId?'true':'false');
+      choice.addEventListener('click',()=>{
+        selectedCloudDeviceId=device.device_id;
+        cloudDeviceSelected.textContent=String(device.name||device.device_id).slice(0,80);
+        cloudDevicePicker.open=false;
+        for(const entry of cloudDevicesList.children){
+          const button=entry.children[0];
+          if(button?.setAttribute)button.setAttribute('aria-current',
+            button===choice?'true':'false');
+        }
+      });
+      const info=document.createElement('span');info.className='cloud-device-state';
+      info.textContent=String(device.platform||'')+' · '+t(device.online?'在线':'离线')+
         (device.current?' · '+t('当前设备'):'');
-      const info=document.createElement('span');
-      info.textContent=String(device.platform||'')+' · '+
-        t(device.online?'在线':'离线')+' · '+String(device.device_id||'').slice(0,80);
-      li.append(heading,info);cloudDevicesList.append(li);
+      li.append(choice,info);cloudDevicesList.append(li);
     }
     cloudDevicesStatus.textContent=cloud.devicesError?
       t('设备清单暂时无法更新（显示上次结果）')+'：'+cloud.devicesError:

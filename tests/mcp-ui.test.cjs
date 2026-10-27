@@ -736,3 +736,42 @@ test('Mac helper loader failure shows an actionable message in both enable error
  assert.match(f.node('error-message').textContent,/macOS 14/);
  assert.doesNotMatch(f.node('error-message').textContent,/MCP 操作未完成/);
 });
+
+
+test('cloud panels appear after secure tunnel and device selector shows name only when closed', async()=>{
+  const tunnel=html.indexOf('id="connection-title"'),cloud=html.indexOf('id="cloud-setup-heading"'),
+    devices=html.indexOf('id="cloud-pair-heading"');
+  assert.ok(tunnel>=0 && cloud>tunnel && devices>cloud,'tunnel > cloud > paired devices');
+  const state=initialState();
+  const selfId='cu-00000000-0000-4000-8000-000000000001';
+  const moonId='cu-00000000-0000-4000-8000-000000000002';
+  state.cloudRouter={paired:true,connected:true,phase:'ready',device_name:'MacBook',
+    device_id:selfId,platform:'darwin',devices:[
+      {device_id:selfId,name:'MacBook',platform:'darwin',online:true,current:true},
+      {device_id:moonId,name:'MOON',platform:'win32',online:false,current:false}
+    ]};
+  const f=await rendererFixture(state);
+  f.update(state);
+  assert.equal(f.node('cloud-device-selected').textContent,'MacBook');
+  assert.match(f.node('cloud-current-device').textContent,/MacBook/);
+  assert.ok(f.node('cloud-current-device').textContent.includes(selfId));
+  const entries=f.node('cloud-device-list').children;
+  assert.deepEqual(entries.map(x=>x.children[0].textContent),[
+    'MacBook ('+selfId+')','MOON ('+moonId+')']);
+  f.node('cloud-device-picker').open=true;
+  await entries[1].children[0].emit('click');
+  assert.equal(f.node('cloud-device-selected').textContent,'MOON');
+  assert.equal(f.node('cloud-device-picker').open,false);
+  assert.ok(f.node('cloud-current-device').textContent.includes(selfId),
+    'current device identity remains visible after selecting a different device');
+});
+test('cloud status distinguishes remote deployment from missing local owner credential',async()=>{
+  const state=initialState();
+  state.cloudBootstrap={phase:'selection_ready',remote:'deployed',hasOwnerKey:false,
+    busy:false,accountOptions:[],kvOptions:[],subdomain:'watermoon3322'};
+  const f=await rendererFixture(state);
+  f.update(state);
+  assert.equal(f.node('cloud-setup-start').disabled,true);
+  assert.ok(f.node('cloud-setup-status').textContent.includes('检测到云端服务已部署'));
+  assert.ok(f.node('cloud-setup-status').textContent.includes('本机尚未保存所有者密钥'));
+});

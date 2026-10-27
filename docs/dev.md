@@ -870,3 +870,12 @@ Setup and exact supported calls: [windows-computer-use.md](windows-computer-use.
 - [x] Router Worker updated in Cloudflare: deployed version `24134db0-649a-4a58-8660-ce2f2ff0b963` with `GET /paired-devices`.
 - [x] Live probes: `/health` HTTP 200, anonymous `/paired-devices` HTTP 401, unauthenticated `/mcp` HTTP 401.
 - [ ] Authenticated paired-device roster on the user's actual 3 devices still requires physical device pairing and UI verification; anonymous denial alone does not verify the full flow.
+
+## 2026-10-27 Connection page layout, device picker and remote cloud detection
+
+- [x] 连接配置页顺序：先「安全通道配置」，再「初始化云端服务」，然后「多设备连接」。现有 Tunnel 配置与连接操作不变。
+- [x] 已配对设备列表改为展开式选择器：收起时仅展示已选设备名称，展开项展示 `设备名 (device_id)`，配套展示平台、在线/离线状态；当前设备独立显示名称与完整稳定 ID，选择其他设备时仍保持可见。
+- [x] 云端初始化自动检测：只读查询授权服务 OAuth metadata 200、Router /health 200、未授权 /mcp 401，区分已部署/未部署/部分部署/网络不可达；不以本地记录代替真实云端健康。真实已部署的 workers.dev 环境检测通过。
+- [x] 若云端已部署但本机未持有所有者密钥，不重新生成密钥覆盖云端；界面显示缺少本机密钥并禁用初始化入口。
+- [x] npm test：619 total，603 PASS、16 SKIP、0 FAIL；Mac 安装包构建与 zh/en/ja UI 冒烟通过；本轮只改桌面端和测试，不重新部署 Worker。
+- [ ] 三台真实已配对设备的选择器数据与端到端 OAuth 执行路径仍需人工联调验收。

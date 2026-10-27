@@ -186,3 +186,12 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
 .cloud-device-item{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
 .cloud-device-item strong{font-size:12px;font-weight:600;overflow-wrap:anywhere}
 .cloud-device-item span{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+
+.cloud-device-picker{border:1px solid var(--line);border-radius:8px;background:var(--paper);margin:8px 0;min-width:0}
+.cloud-device-picker summary{cursor:pointer;padding:11px 12px;font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cloud-device-picker summary:focus-visible{outline:3px solid #98b4fa;outline-offset:2px}
+.cloud-device-picker .cloud-device-list{border-top:1px solid var(--line);padding:8px;margin:0;max-height:280px;overflow:auto}
+.cloud-device-choice{background:transparent;text-align:left;border:0;color:var(--ink);font-size:12px;overflow-wrap:anywhere;padding:0}
+.cloud-device-choice[aria-current="true"]{color:var(--accent);font-weight:650}
+.cloud-device-choice:focus-visible{outline:2px solid #98b4fa;outline-offset:3px}
+.cloud-device-state{white-space:nowrap}
