@@ -133,6 +133,7 @@ class CloudBootstrap {
    return this.remote;
  }
  async findOptions(input={},allowLogin=false){
+   this.workerInventory=null;this.remote='unchecked';this.remoteCheckedAt=null;
    this.phaseSet('discovering');
    let token;
    try{token=await this.cli(['auth','token','--json']);}
