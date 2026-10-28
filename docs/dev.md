@@ -1,6 +1,14 @@
 # Development record — Windows computer use
 
 
+## 2026-10-28 macOS 当前设备配对 Invalid URL 修复与实机验收
+
+- **现象与原因**：macOS ChatToHarness 点击「配对当前设备」出现 `配对失败：TypeError: Invalid URL`。真实路径 `app/renderer.js` 读取 `#cloud-mcp-url`，`app/cloud-router-pairing.cjs:origin` 对空值执行 `new URL(mcpUrl)`，未捕获底层异常；Cloudflare 自动发现虽然提供 Worker 信息，但没有将已验证的远端 MCP URL 传给配对输入框。
+- **修复**：`CloudBootstrap.status()` 在远端部署已验证时返回发现的 Worker MCP 地址；界面仅在输入未被手工编辑且为空时预填该地址，绝不覆盖手工输入。点击配对时先校验 HTTPS + 精确 `/mcp` 路径、无凭证/查询/fragment、43 位 URL-safe 一次性配对码；非法输入不发网络请求，并显示本地化的明确错误。底层 `origin()` 将空值或非 URL 统一转为 `CLOUD_PAIR_URL_INVALID`，不再泄漏 JS TypeError。
+- **验证**：macOS 14.6.1（arm64）在提交 `22e02e784a89d0712ebfbd04a4b5d62b15054741` 上运行 `node --test tests/cloud-router-pairing.test.cjs tests/cloud-router-service.test.cjs tests/cloud-bootstrap.test.cjs tests/cloud-ui-layout.test.cjs`，**26/26 通过**。输出 `dist/mac14-pair-fix-20261028/ChatToHarness-0.8.1-macos-arm64.dmg`（约 354 MiB）；`LSMinimumSystemVersion=14.0`，`codesign --verify --deep --strict` 及 `hdiutil verify` 均通过。
+- **真实打包版验收**：`CTH_DIST_SUBDIR=mac14-pair-fix-20261028 CTH_SMOKE_OUTPUT=.cache/acceptance/mac14-pair-fix-20261028 npm run smoke:installer` 在该 macOS 14.6.1 实机 **PASS**；挂载 DMG、复制并启动打包版 Electron，在 UI 点击「配对当前设备」对空地址、非法 URL、无效一次性码校验均通过（无 `TypeError: Invalid URL`），三语切换/加密保存等既有验收通过，卸载后隔离用户配置保留。
+- **边界**：没有从真实 Cloudflare 获取并消费可用的一次性配对码，**不能宣称真实云端配对成功**。并未覆盖已安装 App 或真实用户配置；Mac 完整 `npm test` 曾在此前轮次失败/终止，本轮只有指定的 26 项与隔离安装 smoke 验收是已证实 PASS。测试包为 ad-hoc 签名、未公证，用户 Finder 下载后 Gatekeeper 流程仍需复验。
+
 ## 2026-10-28 macOS 14.6.1 云端设置新版 DMG 兼容验收（MacHarness 实机）
 
 - **误区纠正**：先前 GitHub Actions 使用 macOS 15 runner，完成的打包/安装烟测只能证明那台构建机通过，不能声称 macOS 14.6.1 用户机器兼容。macOS 15 编译本身并不必然要求 macOS 15 运行；仍需同时检查最低部署版本、动态依赖、应用启动及 Gatekeeper/公证。
