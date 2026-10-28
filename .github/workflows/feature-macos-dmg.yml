@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: feature-mac-dmg-${{ github.ref }}
+  group: feature-mac-app-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   package-macos:
