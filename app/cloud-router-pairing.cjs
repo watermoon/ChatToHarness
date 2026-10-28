@@ -5,7 +5,10 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const CODE=/^[A-Za-z0-9_-]{43}$/;
 function origin(mcpUrl) {
-  const u=new URL(mcpUrl);
+  // A missing/malformed URL is a user input error, not an uncaught TypeError.
+  if(typeof mcpUrl!=='string'||!mcpUrl.trim())throw Error('CLOUD_PAIR_URL_INVALID');
+  let u;
+  try{u=new URL(mcpUrl);}catch{throw Error('CLOUD_PAIR_URL_INVALID');}
   if(u.protocol!=='https:'||!u.hostname||u.pathname!=='/mcp'||u.search||u.hash||
       u.username||u.password)throw Error('CLOUD_PAIR_URL_INVALID');
   return u.origin;
