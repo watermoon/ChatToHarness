@@ -1,0 +1,47 @@
+name: Feature Mac DMG acceptance
+on:
+  push:
+    branches:
+      - feat/cloudflare-multi-device-router
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: feature-mac-dmg-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package-macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CTH_DIST_SUBDIR: feature-mac-dmg
+      CTH_SIGNED: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build native Mac Computer Use helper
+        run: npm run build:computer-use
+      - name: Cloud initialization and UI regression
+        run: node --test tests/cloud-bootstrap.test.cjs tests/cloudflare-discovery.test.cjs tests/cloud-ui-layout.test.cjs
+      - name: Full unit regression
+        run: npm test
+      - name: Build Mac arm64 DMG
+        run: npm run dist
+      - name: Verify packaged app and DMG
+        run: |
+          codesign --verify --deep --strict dist/feature-mac-dmg/mac-arm64/ChatToHarness.app
+          hdiutil verify dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
+          shasum -a 256 dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
+      - name: Isolated Mac installer acceptance
+        run: npm run smoke:installer
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: feature-mac-dmg-${{ github.sha }}
+          path: dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 7
