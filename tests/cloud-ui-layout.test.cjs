@@ -18,6 +18,7 @@ test('renderer automatic cloud status refresh is wired through a real preload IP
   assert.match(main,/bind\('cloud-bootstrap-discover'/);
   assert.match(renderer,/cloud\.remote/);
   assert.match(renderer,/cloudSetupStart\.disabled/);
+  assert.match(renderer,/element\.options\[0\]\.textContent=t\(defaultLabel\)/);
 });
 
 test('initial current-device placeholder has English and Japanese translations',()=>{
