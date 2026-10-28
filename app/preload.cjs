@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('localHarness',Object.freeze({
   cloudRouterPair:input=>call('cloud-router-pair',input),
   cloudRouterListDevices:()=>call('cloud-router-list-devices'),
   cloudBootstrapDiscover:input=>call('cloud-bootstrap-discover',input),
+  cloudBootstrapRuntimeCheck:()=>call('cloud-bootstrap-runtime-check'),
   cloudBootstrapStart:input=>call('cloud-bootstrap-start',input),
   cloudBootstrapCopyKey:()=>call('cloud-bootstrap-copy-key'),
   getState:()=>call('get-state'),saveSettings:value=>call('save-settings',value),
