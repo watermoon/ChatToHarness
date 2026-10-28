@@ -16,6 +16,7 @@ jobs:
     env:
       CTH_DIST_SUBDIR: feature-mac-dmg
       CTH_SIGNED: '0'
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
