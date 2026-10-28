@@ -161,3 +161,22 @@ test('unverified stored owner key cannot silently adopt an existing remote deplo
  assert.equal(s.bootstrap.record.complete,false);
  assert.equal(s.calls.filter(x=>x[0]==='deploy'||x[0]==='secret').length,0);
 });
+
+test('cloud initialization self-check distinguishes absent Node and Wrangler without attempting login or deployment',async t=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ assert.deepEqual(s.bootstrap.runtimeCheck(),
+   {ready:true,nodePresent:true,wranglerPresent:true});
+ const realNode=s.bootstrap.nodePath;
+ s.bootstrap.nodePath=path.join(s.home,'missing-node');
+ assert.deepEqual(s.bootstrap.runtimeCheck(),
+   {ready:false,nodePresent:false,wranglerPresent:true});
+ assert.equal((await s.bootstrap.init({})).error,'CLOUD_NODE_RUNTIME_MISSING');
+ assert.equal(s.calls.length,0);
+ s.bootstrap.nodePath=realNode;
+ fs.rmSync(path.join(s.sourceDir,'node_modules/wrangler/bin/wrangler.js'));
+ assert.deepEqual(s.bootstrap.runtimeCheck(),
+   {ready:false,nodePresent:true,wranglerPresent:false});
+ assert.equal((await s.bootstrap.init({})).error,'CLOUD_WRANGLER_RUNTIME_MISSING');
+ assert.equal(s.calls.length,0);
+ assert.equal((await s.bootstrap.preview()).error,'CLOUD_WRANGLER_RUNTIME_MISSING');
+});
