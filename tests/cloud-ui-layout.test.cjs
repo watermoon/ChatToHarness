@@ -19,3 +19,12 @@ test('renderer automatic cloud status refresh is wired through a real preload IP
   assert.match(renderer,/cloud\.remote/);
   assert.match(renderer,/cloudSetupStart\.disabled/);
 });
+
+test('initial current-device placeholder has English and Japanese translations',()=>{
+  const html=app('index.html'),messages=require('../app/locales.js');
+  const placeholder='当前设备：尚未识别';
+  assert.ok(html.includes(placeholder));
+  assert.ok(messages[placeholder]);
+  assert.deepEqual(messages[placeholder],
+    ['Current device: not identified','現在のデバイス：未識別']);
+});
