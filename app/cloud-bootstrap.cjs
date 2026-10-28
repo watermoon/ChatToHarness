@@ -79,7 +79,8 @@ class CloudBootstrap {
   accountId:this.record?.accountId||this.discoveredAccountId,
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
   kvId:this.selectedKvId||this.record?.kvId,
-  mcp_url:this.record?urls(this.record.subdomain).mcp:'',
+  mcp_url:this.remote==='deployed'&&this.discoveredSubdomain?
+    urls(this.discoveredSubdomain).mcp:this.record?urls(this.record.subdomain).mcp:'',
   remote:this.remote,remoteCheckedAt:this.remoteCheckedAt,
   hasOwnerKey:Boolean(this.record?.encryptedKey),ready:this.phase==='ready' && this.remote==='deployed'};}
  phaseSet(p,e=''){this.phase=p;this.error=e;this.onChange();}
