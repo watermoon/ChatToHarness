@@ -275,6 +275,7 @@ function registerIPC(){
   // management action. They can only resolve an already captured request ID.
   bind('mcp-resolve-approval',mcp(input=>{mcpManager.approve(input);return state();}));
   bind('cloud-bootstrap-discover',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.preview(input);});
+  bind('cloud-bootstrap-runtime-check',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.runtimeCheck();});
   bind('cloud-bootstrap-start',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.init(input);});
   bind('cloud-bootstrap-copy-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.copyOwnerKey(require('electron').clipboard);});
   bind('cloud-router-list-devices',async()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.refreshDevices();});
