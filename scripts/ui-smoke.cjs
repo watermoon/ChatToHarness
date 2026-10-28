@@ -192,6 +192,26 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   assert.equal(await page.locator('#panel-overview').isVisible(), true);
   assert.equal(/ChatGPT|OpenAI|Mac|macOS|Windows/.test(await page.locator('#panel-overview').textContent()), false);
 
+  // Current-device pairing validates locally: no malformed URL or short
+  // pairing code must reach the network or surface Node's TypeError.
+  await tab(page,'connection');
+  const pairInput=page.locator('#cloud-mcp-url');
+  const pairCode=page.locator('#cloud-pair-code');
+  const pairButton=page.locator('#cloud-pair-submit');
+  const pairStatus=page.locator('#cloud-pair-status');
+  await pairInput.fill('');
+  await pairButton.click();
+  assert.match(await pairStatus.textContent(),/MCP/);
+  await pairInput.fill('not-a-url');
+  await pairButton.click();
+  assert.match(await pairStatus.textContent(),/MCP/);
+  assert.doesNotMatch(await pairStatus.textContent(),/TypeError|Invalid URL/);
+  await pairInput.fill('https://router.example/mcp');
+  await pairCode.fill('invalid');
+  await pairButton.click();
+  assert.match(await pairStatus.textContent(),/43/);
+  await pairInput.fill('');await pairCode.fill('');
+
   // Manage a real MCP peer through the packaged app before configuring either
   // a workspace or a tunnel. The smoke runner's standalone Node executable is
   // intentional: Electron's process.execPath would launch another desktop app.
