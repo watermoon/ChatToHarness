@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
-const {CloudPairingStore,redeem} = require('../app/cloud-router-pairing.cjs');
+const {CloudPairingStore,redeem,origin} = require('../app/cloud-router-pairing.cjs');
 const {CloudRouterService}=require('../app/cloud-router-service.cjs');
 const pairing = () => import(pathToFileURL(path.resolve(__dirname,'../cloud-router/src/pairing.mjs')).href);
 const id='cu-11111111-1111-4111-8111-111111111111';
@@ -104,4 +104,20 @@ test('service pairs once then reconnects using stored secure credentials',async(
   assert.equal(second.startStored().enabled,true);
   second.stop();
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('current device pairing rejects missing or malformed MCP URL before network access',async()=>{
+ let attempted=0;
+ const fetcher=async()=>{attempted++;throw Error('unexpected network');};
+ for(const bad of [undefined,null,'','   ','not-a-url','chattoharness-cloud-router.example.com/mcp',
+   'http://router.example/mcp','https://router.example',
+   'https://router.example/mcp/','https://router.example/mcp?code=x',
+   'https://user:password@router.example/mcp']){
+   assert.throws(()=>origin(bad),{message:'CLOUD_PAIR_URL_INVALID'});
+   await assert.rejects(()=>redeem({
+     mcpUrl:bad,code:'x'.repeat(43),identity,fetcher
+   }),{message:'CLOUD_PAIR_URL_INVALID'});
+ }
+ assert.equal(attempted,0);
+ assert.equal(origin('https://router.example/mcp'),'https://router.example');
 });
