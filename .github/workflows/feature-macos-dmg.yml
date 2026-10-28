@@ -1,4 +1,4 @@
-name: Feature Mac DMG acceptance
+name: Feature Mac App acceptance
 on:
   push:
     branches:
@@ -14,7 +14,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      CTH_DIST_SUBDIR: feature-mac-dmg
+      CTH_DIST_SUBDIR: feature-mac-app
       CTH_SIGNED: '0'
       DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
     steps:
@@ -27,22 +27,32 @@ jobs:
       - name: Build native Mac Computer Use helper
         run: npm run build:computer-use
       - name: Cloud initialization and UI regression
-        run: node --test tests/cloud-bootstrap.test.cjs tests/cloudflare-discovery.test.cjs tests/cloud-ui-layout.test.cjs
+        run: node --test tests/cloud-bootstrap.test.cjs tests/cloudflare-discovery.test.cjs tests/cloud-ui-layout.test.cjs tests/cloud-router-pairing.test.cjs
       - name: Full unit regression
         run: npm test
-      - name: Build Mac arm64 DMG
-        run: npm run dist
-      - name: Verify packaged app and DMG
+      - name: Build Mac arm64 App (without DMG)
+        run: npm run build
+      - name: Verify macOS 14-compatible App and signature
         run: |
-          codesign --verify --deep --strict dist/feature-mac-dmg/mac-arm64/ChatToHarness.app
-          hdiutil verify dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
-          shasum -a 256 dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
-      - name: Isolated Mac installer acceptance
-        run: npm run smoke:installer
+          APP=dist/feature-mac-app/mac-arm64/ChatToHarness.app
+          test -x "$APP/Contents/MacOS/ChatToHarness"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")" = "14.0"
+          codesign --verify --deep --strict "$APP"
+      - name: Run actual packaged App Cloudflare CLI and GUI smoke
+        run: |
+          CTH_EXECUTABLE="$PWD/dist/feature-mac-app/mac-arm64/ChatToHarness.app/Contents/MacOS/ChatToHarness" \
+          CTH_SMOKE_OUTPUT="$PWD/.cache/acceptance/mac-feature-app" npm run smoke:ui
+      - name: Archive runnable .app for download
+        run: |
+          mkdir -p dist/feature-mac-app/artifacts
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/feature-mac-app/mac-arm64/ChatToHarness.app \
+            dist/feature-mac-app/artifacts/ChatToHarness-0.8.1-macos-arm64-app.zip
+          shasum -a 256 dist/feature-mac-app/artifacts/*.zip
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: feature-mac-dmg-${{ github.sha }}
-          path: dist/feature-mac-dmg/ChatToHarness-0.8.1-macos-arm64.dmg
+          name: feature-mac-app-${{ github.sha }}
+          path: dist/feature-mac-app/artifacts/ChatToHarness-0.8.1-macos-arm64-app.zip
           if-no-files-found: error
           retention-days: 7
