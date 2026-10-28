@@ -1,6 +1,15 @@
 # Development record — Windows computer use
 
 
+## 2026-10-28 macOS 14.6.1 云端设置新版 DMG 兼容验收（MacHarness 实机）
+
+- **误区纠正**：先前 GitHub Actions 使用 macOS 15 runner，完成的打包/安装烟测只能证明那台构建机通过，不能声称 macOS 14.6.1 用户机器兼容。macOS 15 编译本身并不必然要求 macOS 15 运行；仍需同时检查最低部署版本、动态依赖、应用启动及 Gatekeeper/公证。
+- **实机环境**：MacHarness 报告 macOS 14.6.1（23G93）、Apple Silicon arm64、Xcode 16.2。此前工作区干净，已在原分支 `feat/cloudflare-multi-device-router` fast-forward 到 `94b87a2`；没有创建 worktree、替换 /Applications 安装版或访问真实凭据。
+- **问题与修复**：Mac 14 真包安装验收最初发现 `当前设备：尚未识别` 缺英语/日语翻译；修复后仍发现切换语言时 Cloudflare 账户和 KV 下拉框占位选项未重新渲染（`请选择`、`账户`、`创建新的`）。已分别补 `app/locales.js` 和 `app/renderer.js`，并为测试增加有界中文残留诊断及回归断言。
+- **最终构建**：在 macOS 14.6.1 本机从提交 `94b87a26f7eb443d63148a1b9792956e9e0d2474` 构建 `dist/mac14-cloud-release-test-20261028/ChatToHarness-0.8.1-macos-arm64.dmg`（约 354 MiB）。App Info.plist `LSMinimumSystemVersion=14.0`；`codesign --verify --deep --strict` 和 `hdiutil verify` 均通过。
+- **实机验收**：`node --test tests/cloud-bootstrap.test.cjs tests/cloudflare-discovery.test.cjs tests/cloud-ui-layout.test.cjs` 共 **20/20 通过**。使用独立测试配置通过 `CTH_DIST_SUBDIR=mac14-cloud-release-test-20261028 CTH_SMOKE_OUTPUT=.cache/acceptance/mac14-cloud-release-test-20261028 npm run smoke:installer`：真实挂载 DMG、复制 App、启动打包版 Electron、46 个可用本地工具、三语界面及凭据保持、窗口/连接管理、清理与卸载后保留配置均通过，返回 `installer:true,startup:true,uninstallRetainsData:true`。
+- **边界**：macOS 14 上的完整 `npm test` 曾以退出码 1 结束（日志因输出限制截断），不能宣称完整本机测试通过；云端真实 Worker/Tunnel 未在本轮验证。DMG 使用 ad hoc 签名、未公证，且未通过带下载 quarantine 属性的 Finder 双击安装流程，Gatekeeper 是否弹出警告仍需用户最终复验。保留原本地安装版、历史 DMG 和配置，不自动安装。
+
 ## 2026-10-27 Cloudflare 多实例状态自动检查和连接页重排
 
 - **位置**：连接配置依次显示「安全通道配置」→「多实例远端服务」→「多设备连接」。已有 Tunnel、代理及设备配对字段不改动。新增结构回归 `tests/cloud-ui-layout.test.cjs`。
