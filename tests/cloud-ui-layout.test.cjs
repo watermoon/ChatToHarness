@@ -29,3 +29,18 @@ test('initial current-device placeholder has English and Japanese translations',
   assert.deepEqual(messages[placeholder],
     ['Current device: not identified','現在のデバイス：未識別']);
 });
+
+test('pair-current-device validates URL and pairing code before IPC; cloud discovery provides a default',()=>{
+ const renderer=app('renderer.js'),bootstrap=app('cloud-bootstrap.cjs');
+ const messages=require('../app/locales.js');
+ assert.match(bootstrap,/this\.remote==='deployed'&&this\.discoveredSubdomain/);
+ assert.match(renderer,/cloud\.remote==='deployed'&&cloud\.mcp_url/);
+ assert.match(renderer,/!cloudPairUrl\.dataset\.manuallyEdited/);
+ assert.match(renderer,/if\(!input\.mcpUrl\)/);
+ assert.match(renderer,/const url=new URL\(input\.mcpUrl\)/);
+ assert.match(renderer,/if\(!\/\^\[A-Za-z0-9_-\]\{43\}\$\/\.test\(input\.pairingCode\)\)/);
+ for(const value of ['请先填写统一 MCP 地址','MCP 地址无效，请填写完整的 https://…/mcp 地址',
+  '配对码格式不正确，请使用 43 位一次性配对码'])
+  assert.ok(Array.isArray(messages[value])&&messages[value].length===2,
+    'missing English/Japanese translation: '+value);
+});
