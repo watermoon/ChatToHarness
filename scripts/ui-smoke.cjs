@@ -402,7 +402,7 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
         const visible = await page.locator('body').innerText();
         const untranslated=visible.replaceAll('简体中文','').replaceAll('日本語','')
           .replaceAll('示例工程 project','').replaceAll('示例工程','').replaceAll('中文','');
-        const unmatched=[...new Set([...untranslated.matchAll(/[\\u3400-\\u9fff]+/gu)]
+        const unmatched=[...new Set([...untranslated.matchAll(/[\u3400-\u9fff]+/gu)]
           .map(match=>match[0]))].slice(0,16);
         assert.deepEqual(unmatched,[],`English UI has untranslated Chinese in ${name}`);
       }
