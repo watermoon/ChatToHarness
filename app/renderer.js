@@ -43,6 +43,9 @@
       const wanted=selected||previouslySelected;
       element.value=items.some(i=>i.id===wanted)?wanted:items.length===1?items[0].id:'';
     }else if(selected && !element.value && items.some(i=>i.id===selected))element.value=selected;
+    // Options are intentionally excluded from documentTranslator. Re-render their
+    // placeholder on every locale update, even when item identity is unchanged.
+    if(element.options.length)element.options[0].textContent=t(defaultLabel);
   };
   let lastDiscoveredAccount='';
   const updateCloudSetupStatus=state=>{
