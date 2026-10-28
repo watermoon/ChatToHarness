@@ -93,9 +93,18 @@ class CloudBootstrap {
   return key;
  }
  copyOwnerKey(clipboard){clipboard.writeText(this.ownerKey());return {copied:true};}
+ runtimeCheck(){
+  // Read-only, no authentication, no child process, no credential disclosure.
+  const nodePresent=typeof this.nodePath==='string'&&fs.existsSync(this.nodePath);
+  const wrangler=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
+  const wranglerPresent=fs.existsSync(wrangler);
+  return {ready:nodePresent&&wranglerPresent,nodePresent,wranglerPresent};
+ }
  async cli(args,input,timeoutMs){
+  const check=this.runtimeCheck();
+  if(!check.nodePresent)throw Error('CLOUD_NODE_RUNTIME_MISSING');
+  if(!check.wranglerPresent)throw Error('CLOUD_WRANGLER_RUNTIME_MISSING');
   const script=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
-  if(!fs.existsSync(script)||!fs.existsSync(this.nodePath))throw Error('CLOUD_RUNTIME_NOT_BUNDLED');
   const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs});
   if(res.code!==0)throw Error('CLOUD_WRANGLER_FAILED_'+args[0].toUpperCase());
   return res.stdout;
@@ -138,7 +147,11 @@ class CloudBootstrap {
    this.phaseSet('discovering');
    let token;
    try{token=await this.cli(['auth','token','--json']);}
-   catch{
+   catch(error){
+     // Never confuse missing/unusable packaged resources with a login problem.
+     const code=String(error?.message||'');
+     if(code==='CLOUD_NODE_RUNTIME_MISSING'||code==='CLOUD_WRANGLER_RUNTIME_MISSING'
+       ||code==='CLOUD_WRANGLER_START_FAILED'||code==='CLOUD_WRANGLER_TIMEOUT')throw error;
      if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
      this.phaseSet('authorize_browser');
      await this.cli(['login','--device','--use-keyring'],undefined,360000);
