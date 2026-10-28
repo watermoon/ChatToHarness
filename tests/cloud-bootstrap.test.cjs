@@ -107,6 +107,8 @@ test('readonly cloud detection reports deployed service without overwriting miss
  };
  const discovered=await s.bootstrap.preview();
  assert.equal(discovered.remote,'deployed');
+ assert.equal(discovered.mcp_url,urls('watermoon3322').mcp,
+   'verified remote URL should be available for automatic device pairing');
  assert.equal(discovered.hasOwnerKey,false);
  const deployed=await s.bootstrap.init({});
  assert.equal(deployed.phase,'failed');
