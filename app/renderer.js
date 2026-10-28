@@ -18,6 +18,8 @@
   const cloudSetupStart=byId('cloud-setup-start');
   const cloudSetupCopyKey=byId('cloud-setup-copy-key');
   const cloudSetupStatus=byId('cloud-setup-status');
+  const cloudPairUrl=byId('cloud-mcp-url');
+  cloudPairUrl?.addEventListener('input',()=>{cloudPairUrl.dataset.manuallyEdited='true';});
   const cloudPhaseLabels={idle:'尚未初始化',checking:'正在检测云端服务',checking_account:'验证 Cloudflare 账户',
     authorize_browser:'请在浏览器批准 Cloudflare 授权',discovering:'自动识别账户和 KV',
     choose_account:'请选择 Cloudflare 账户',choose_kv:'请选择 OAuth KV',selection_ready:'配置已识别',
@@ -75,6 +77,9 @@
     lastDiscoveredAccount=cloud.accountId||lastDiscoveredAccount;
     if(cloud.subdomain)cloudDiscoveryInfo.textContent=t('检测到子域名：')+
       cloud.subdomain+'.workers.dev';
+    // Only fill a verified deployed endpoint; preserve any user-edited address.
+    if(cloud.remote==='deployed'&&cloud.mcp_url&&!cloudPairUrl.value.trim()&&
+        !cloudPairUrl.dataset.manuallyEdited)cloudPairUrl.value=cloud.mcp_url;
   };
   const discoverCloud=async input=>{
     try{const state=await api.cloudBootstrapDiscover(input||{});updateCloudSetupStatus({cloudBootstrap:state});}
@@ -102,7 +107,6 @@
     catch(e){cloudSetupStatus.textContent=t('复制密钥失败')+
       '：'+String(e.message||e).slice(0,120);}
   });
-  const cloudPairUrl=byId('cloud-mcp-url');
   const cloudPairCode=byId('cloud-pair-code');
   const cloudPairSubmit=byId('cloud-pair-submit');
   const cloudDevicesList=byId('cloud-device-list');
@@ -179,6 +183,23 @@
   };
   cloudPairSubmit?.addEventListener('click',async()=>{
     const input={mcpUrl:cloudPairUrl.value.trim(),pairingCode:cloudPairCode.value.trim()};
+    if(!input.mcpUrl){
+      cloudPairStatus.textContent=t('请先填写统一 MCP 地址');
+      cloudPairUrl.focus();return;
+    }
+    try{
+      const url=new URL(input.mcpUrl);
+      if(url.protocol!=='https:'||!url.hostname||url.pathname!=='/mcp'||
+        url.search||url.hash||url.username||url.password)
+        throw Error('CLOUD_PAIR_URL_INVALID');
+    }catch{
+      cloudPairStatus.textContent=t('MCP 地址无效，请填写完整的 https://…/mcp 地址');
+      cloudPairUrl.focus();return;
+    }
+    if(!/^[A-Za-z0-9_-]{43}$/.test(input.pairingCode)){
+      cloudPairStatus.textContent=t('配对码格式不正确，请使用 43 位一次性配对码');
+      cloudPairCode.focus();return;
+    }
     cloudPairSubmit.disabled=true;
     cloudPairStatus.textContent=t('正在验证一次性配对码…');
     try {
@@ -187,7 +208,11 @@
       updateCloudPairStatus(state);
       void refreshCloudDevices();
     } catch(error) {
-      cloudPairStatus.textContent=t('配对失败：')+String(error?.message||t('请核对服务地址和配对码')).slice(0,120);
+      const message=String(error?.message||'');
+      cloudPairStatus.textContent=t('配对失败：')+
+        (/CLOUD_PAIR_URL_INVALID|Invalid URL/.test(message)?
+          t('MCP 地址无效，请填写完整的 https://…/mcp 地址'):
+          message.slice(0,120)||t('请核对服务地址和配对码'));
     } finally {cloudPairSubmit.disabled=false;}
   });
   api.getState().then(s=>{updateCloudPairStatus(s);if(s?.cloudRouter?.paired)void refreshCloudDevices();}).catch(()=>{});
