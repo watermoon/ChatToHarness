@@ -1388,6 +1388,7 @@
   "配对后可查看设备清单。": ["Pair a device to see the roster.", "ペアリング後にデバイス一覧を表示します。"],
   "尚未同步设备清单": ["No device roster synchronized yet", "デバイス一覧は未同期です"],
   "当前设备": ["This device", "このデバイス"],
+  "当前设备：尚未识别": ["Current device: not identified", "現在のデバイス：未識別"],
   "在线": ["Online", "オンライン"],
   "离线": ["Offline", "オフライン"],
   "设备清单暂时无法更新（显示上次结果）": ["Could not refresh devices (showing last known data)", "デバイス一覧を更新できません（前回の結果を表示）"],
