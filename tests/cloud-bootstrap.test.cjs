@@ -9,6 +9,10 @@ const encryption={isEncryptionAvailable:()=>true,
  decryptString:buf=>{assert.ok(buf.toString().startsWith('encrypted:'));return buf.toString().slice(10);}};
 function scenario() {
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'cth-bootstrap-test-'));
+ const sourceDir=path.join(home,'cloud-router');
+ const wrangler=path.join(sourceDir,'node_modules/wrangler/bin/wrangler.js');
+ fs.mkdirSync(path.dirname(wrangler),{recursive:true});
+ fs.writeFileSync(wrangler,'// test fixture only\n');
  const calls=[],inputs=[],fetchCalls=[];
  let deployed=false;
  const runner=async(node,script,args,opts)=>{
@@ -35,8 +39,8 @@ function scenario() {
   fetchCalls.push({url,opts});
   return {status:deployed?(url.includes('.workers.dev/mcp')?401:200):404};
  };
- const bootstrap=new CloudBootstrap({home,safeStorage:encryption,nodePath:process.execPath,sourceDir:source,runner,fetcher});
- return {home,calls,inputs,fetchCalls,bootstrap};
+ const bootstrap=new CloudBootstrap({home,safeStorage:encryption,nodePath:process.execPath,sourceDir,runner,fetcher});
+ return {home,sourceDir,calls,inputs,fetchCalls,bootstrap};
 }
 test('workers.dev identity is normalized and rejects arbitrary origins or shell metacharacters',()=>{
  assert.equal(subdomain('watermoon3322.workers.dev'),'watermoon3322');
@@ -64,7 +68,7 @@ test('one click provisions KV, encrypts 256-bit owner key, deploys Workers and c
  assert.ok(s.calls.some(x=>x[0]==='deploy'));
  const clipboard={writeText(v){assert.equal(v,s.inputs[0]);}};
  assert.deepEqual(s.bootstrap.copyOwnerKey(clipboard),{copied:true});
- const second=new CloudBootstrap({home:s.home,safeStorage:encryption,nodePath:process.execPath,sourceDir:source,
+ const second=new CloudBootstrap({home:s.home,safeStorage:encryption,nodePath:process.execPath,sourceDir:s.sourceDir,
    runner:s.bootstrap.runner,fetcher:s.bootstrap.fetcher});
  assert.equal(second.status().ready,false); // Do not trust the saved completion flag without live verification.
  await second.preview();
