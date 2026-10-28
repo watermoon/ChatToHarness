@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ChatToHarness UI 中文 space '));
@@ -121,6 +121,23 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
 `);
   let page = await launch();
   const initial = await getState();
+  // Exercise the exact paths computed by the packaged main process, without
+  // invoking login, deploying Workers, or reading any saved cloud credentials.
+  const cloudRuntime = await page.evaluate(() => window.localHarness.cloudBootstrapRuntimeCheck());
+  assert.equal(cloudRuntime.ready,true,'Cloud initializer must have bundled Node and Wrangler: '+JSON.stringify(cloudRuntime));
+  if (!development) {
+    const resources=process.platform==='darwin'
+      ? path.resolve(path.dirname(executable),'..','Resources')
+      : path.join(path.dirname(executable),'resources');
+    const binary=path.join(resources,'node',process.platform==='win32'?'node.exe':'bin/node');
+    const script=path.join(resources,'cloud-router/node_modules/wrangler/bin/wrangler.js');
+    const result=spawnSync(binary,[script,'--version'],{
+      cwd:path.join(resources,'cloud-router'),encoding:'utf8',timeout:30000,
+      env:{...process.env,HOME:stateHome,WRANGLER_SEND_METRICS:'false',NO_COLOR:'1'}
+    });
+    assert.equal(result.status,0,'Bundled Wrangler startup failed: '+
+      String(result.error?.message||result.stderr||result.stdout||'').slice(-1200));
+  }
   assert.equal(initial.settings.autoProjectContext, true);
   assert.deepEqual(initial.settings.directories, []);
   assert.equal(await page.title(), 'ChatToHarness');
