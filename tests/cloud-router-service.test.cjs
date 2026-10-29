@@ -38,6 +38,9 @@ test('the device registers its stable local identity and calls existing manager 
   const socket=Socket.instances.at(-1);
   socket.open();
   assert.equal(socket.sent[0].device_id,'cu-00000000-0000-4000-8000-000000000001');
+  assert.equal(socket.sent[0].harness_version,require('../package.json').version);
+  assert.equal(typeof socket.sent[0].os_version,'string');
+  assert.ok(socket.sent[0].os_version.length>0);
   socket.message({type:'registered',device_id:socket.sent[0].device_id});
   assert.equal(service.status().connected,true);
   socket.message({type:'invoke',request_id:'1',tool_name:'get_harness_status',arguments:{}});
@@ -66,7 +69,7 @@ test('desktop paired roster uses stored device token, masks secrets, marks curre
     return {ok:true,json:async()=>[
       {device_id:'moon',name:'MOON',platform:'win32',online:false,paired_at:1000},
       {device_id:'cu-00000000-0000-4000-8000-000000000001',name:'Mac',platform:'darwin',
-       online:true,paired_at:1001}
+       online:true,os_version:'macOS 14.6.1',harness_version:'0.8.1',paired_at:1001}
     ]};
   };
   const service=new CloudRouterService({manager:{call:async()=>{}},
@@ -74,6 +77,10 @@ test('desktop paired roster uses stored device token, masks secrets, marks curre
     pairStore,fetcher,WebSocketImpl:Socket});
   const state=await service.refreshDevices();
   assert.equal(state.devices.length,2);
+  assert.equal(state.devices.find(x=>x.current)?.os_version,'macOS 14.6.1');
+  assert.equal(state.devices.find(x=>x.current)?.harness_version,'0.8.1');
+  assert.equal(state.devices.find(x=>!x.current)?.harness_version,'');
+  assert.equal(state.local_harness_version,require('../package.json').version);
   assert.deepEqual(state.devices.map(x=>[x.name,x.online,x.current]),[
     ['MOON',false,false],['Mac',true,true]]);
   assert.match(calls[0].url,/\/paired-devices$/);
@@ -93,4 +100,32 @@ test('paired roster network errors are surfaced while previous snapshot stays vi
   const status=await service.refreshDevices();
   assert.equal(status.devices.length,1);
   assert.equal(status.devicesError,'CLOUD_ROSTER_UNAVAILABLE');
+});
+
+test('disconnect closes agent, retains pairing and remains disconnected after restart until reconnect',()=>{
+ let paused=false;
+ const pairStore={
+  read:()=>({mcpUrl:'https://test.example/mcp',agentUrl:'wss://test.example/agent',
+    token:TOKEN,paused}),
+  setPaused(value){paused=value;}
+ };
+ Socket.instances.length=0;
+ const options={manager:{call:async()=>{}},identity:{id:'cu-00000000-0000-4000-8000-000000000001',
+   name:'Mac',platform:'darwin'},pairStore,WebSocketImpl:Socket};
+ const first=new CloudRouterService(options);
+ assert.equal(first.startStored().phase,'connecting');
+ const before=Socket.instances.length;
+ const state=first.disconnect();
+ assert.equal(state.paused,true);
+ assert.equal(state.paired,true);
+ assert.equal(state.connected,false);
+ assert.equal(state.enabled,false);
+ const second=new CloudRouterService(options);
+ assert.equal(second.startStored().paused,true);
+ assert.equal(second.status().paired,true);
+ assert.equal(Socket.instances.length,before);
+ assert.equal(second.reconnect().phase,'connecting');
+ assert.equal(second.status().paused,false);
+ assert.equal(Socket.instances.length,before+1);
+ second.stop();
 });

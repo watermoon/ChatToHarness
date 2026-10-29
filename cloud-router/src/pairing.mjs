@@ -39,3 +39,57 @@ export async function verifyDevice(ctx,id,token) {
   const stored=await ctx.storage.get('device:'+id);
   return Boolean(stored && stored.hash===await sha256(token));
 }
+
+
+// Browser-approved pairing. The device generates its own credential and uploads
+// ONLY a SHA-256 digest; the Worker never holds the credential in cleartext.
+const HEX_HASH=/^[a-f0-9]{64}$/;
+export async function requestDevicePairing(ctx,input) {
+  if(!input||!DEVICE_PATTERN.test(input.device_id||'')||
+    typeof input.name!=='string'||!input.name.trim()||input.name.length>80||
+    !['darwin','win32','linux'].includes(input.platform)||
+    !HEX_HASH.test(input.device_token_hash||''))return {error:'PAIR_INVALID'};
+  if(await ctx.storage.get('device:'+input.device_id))return {error:'DEVICE_ALREADY_PAIRED'};
+  const pending=await ctx.storage.list({prefix:'request:',limit:32});
+  let live=0;
+  for(const [k,v] of pending){
+    if(v.expires_at<=Date.now())await ctx.storage.delete(k);
+    else live++;
+  }
+  if(live>=20)return {error:'PAIR_REQUEST_LIMIT'};
+  const request_id=generateSecret(),poll_secret=generateSecret();
+  const expires_at=Date.now()+PAIR_TTL_MS;
+  await ctx.storage.put('request:'+request_id,{
+    device_id:input.device_id,name:input.name,platform:input.platform,
+    hash:input.device_token_hash,poll_hash:await sha256(poll_secret),
+    expires_at,status:'pending'
+  });
+  return {request_id,poll_secret,expires_at};
+}
+export async function pairingRequestDetails(ctx,id){
+  if(!PAIR_PATTERN.test(id||''))return {error:'PAIR_INVALID'};
+  const v=await ctx.storage.get('request:'+id);
+  if(!v||v.expires_at<=Date.now())return {error:'PAIR_EXPIRED_OR_USED'};
+  return {name:v.name,platform:v.platform,device_id:v.device_id,expires_at:v.expires_at,status:v.status};
+}
+export async function approveDevicePairing(ctx,id){
+  if(!PAIR_PATTERN.test(id||''))return {error:'PAIR_INVALID'};
+  return ctx.storage.transaction(async tx=>{
+    const key='request:'+id,v=await tx.get(key);
+    if(!v||v.expires_at<=Date.now())return {error:'PAIR_EXPIRED_OR_USED'};
+    if(v.status!=='pending')return {error:'PAIR_EXPIRED_OR_USED'};
+    if(await tx.get('device:'+v.device_id))return {error:'DEVICE_ALREADY_PAIRED'};
+    await tx.put('device:'+v.device_id,{
+      hash:v.hash,name:v.name,platform:v.platform,paired_at:Date.now()
+    });
+    await tx.put(key,{...v,status:'approved'});
+    return {approved:true};
+  });
+}
+export async function devicePairingStatus(ctx,id,poll_secret){
+  if(!PAIR_PATTERN.test(id||'')||!PAIR_PATTERN.test(poll_secret||''))return {error:'PAIR_INVALID'};
+  const v=await ctx.storage.get('request:'+id);
+  if(!v||v.expires_at<=Date.now())return {error:'PAIR_EXPIRED_OR_USED'};
+  if(v.poll_hash!==await sha256(poll_secret))return {error:'PAIR_UNAUTHORIZED'};
+  return {status:v.status,device_id:v.device_id};
+}

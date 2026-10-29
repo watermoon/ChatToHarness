@@ -2,17 +2,22 @@
 // Experimental, opt-in Cloudflare Agent. Legacy Secure MCP Tunnel is unaffected.
 // No remote command/file write/Computer Use support until production OAuth/approvals.
 const {connectAgent} = require('./cloud-router-agent.cjs');
-const {redeem}=require('./cloud-router-pairing.cjs');
+const {osProductVersion}=require('./device-os-version.cjs');
+const LOCAL_VERSION=require('../package.json').version;
+const LOCAL_OS_VERSION=osProductVersion();
+const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pairing.cjs');
 const SAFE = Object.freeze(['get_harness_status']);
 const FORBIDDEN = new Set(['computer_use','start_process','start_task','write_file','edit_block','apply_project_edit']);
 class CloudRouterService {
-  constructor({manager, identity, pairStore, fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket}) {
+  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket}) {
     if (!manager || !identity?.id || !identity.platform || !identity.name)
       throw new Error('CLOUD_ROUTER_DEVICE_UNAVAILABLE');
     this.manager = manager;
     this.pairStore=pairStore;
+    this.getOwnerKey=getOwnerKey;
     this.fetcher=fetcher;
     this.identity = identity;
+    this.localOsVersion=LOCAL_OS_VERSION;
     this.log = log;
     this.onChange = onChange;
     this.WebSocketImpl = WebSocketImpl;
@@ -21,6 +26,8 @@ class CloudRouterService {
     this.lastError = '';
     this.mcpUrl=null;
     this.devices=[];this.devicesUpdatedAt=null;this.devicesError='';this.devicesRefreshing=false;this.devicesPromise=null;
+    this.autoPairPending=null;
+    this.paused=false;
   }
   start({url, token, enabled = false} = {}) {
     this.stop();
@@ -33,7 +40,7 @@ class CloudRouterService {
         throw new Error('CLOUD_ROUTER_INVALID_URL');
       this.agent = connectAgent({
         url: parsed.href, token, deviceId: this.identity.id, name: this.identity.name,
-        platform: this.identity.platform, WebSocketImpl: this.WebSocketImpl,
+        platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,
         allowedTools: SAFE,
         execute: (name, args) => this.execute(name, args),
         onStatusChange: () => this.onChange(this.status())
@@ -48,9 +55,36 @@ class CloudRouterService {
   }
   startStored() {
     const paired=this.pairStore?.read();
-    if(!paired) return this.status();
+    if(!paired)return this.status();
     this.mcpUrl=paired.mcpUrl;
+    this.paused=paired.paused===true;
+    if(this.paused){
+      this.stop();
+      this.onChange(this.status());
+      return this.status();
+    }
     return this.start({enabled:true,url:paired.agentUrl,token:paired.token});
+  }
+  clearLocalPairing(){
+    this.stop();this.pairStore.clearLocalPairing();
+    this.mcpUrl='';this.devices=[];this.devicesUpdatedAt=null;
+    this.devicesError='';this.paused=false;this.onChange(this.status());
+    return this.status();
+  }
+  disconnect() {
+    const paired=this.pairStore?.read();
+    if(!paired)throw Error('CLOUD_PAIR_NOT_FOUND');
+    this.pairStore.setPaused(true);
+    this.mcpUrl=paired.mcpUrl;this.paused=true;
+    this.stop();this.onChange(this.status());
+    return this.status();
+  }
+  reconnect() {
+    const paired=this.pairStore?.read();
+    if(!paired)throw Error('CLOUD_PAIR_NOT_FOUND');
+    this.pairStore.setPaused(false);this.paused=false;
+    const state=this.startStored();
+    this.onChange(state);return state;
   }
   async pair({mcpUrl,pairingCode}={}) {
     if(!this.pairStore)throw Error('CLOUD_PAIR_STORE_UNAVAILABLE');
@@ -60,6 +94,68 @@ class CloudRouterService {
     const saved=this.pairStore.read();
     if(!saved)throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
     return this.start({enabled:true,url:saved.agentUrl,token:saved.token});
+  }
+  async autoPair({mcpUrl,openExternal}={}){
+    if(!this.pairStore)throw Error('CLOUD_PAIR_STORE_UNAVAILABLE');
+    if(this.pairStore.read())return this.startStored();
+    if(this.autoPairPending)throw Error('CLOUD_AUTO_PAIR_ALREADY_RUNNING');
+    if(typeof openExternal!=='function')throw Error('CLOUD_PAIR_BROWSER_REQUIRED');
+    if(!this.pairStore.safeStorage?.isEncryptionAvailable?.())
+      throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
+    this.phase='requesting_approval';this.lastError='';this.onChange(this.status());
+    let session;
+    try{
+      session=await beginDevicePairing({mcpUrl,identity:this.identity,fetcher:this.fetcher});
+      this.autoPairPending=session;
+      this.phase='awaiting_approval';this.onChange(this.status());
+      const ownerKey=this.getOwnerKey(mcpUrl);
+      if(ownerKey){
+        // Never send Owner Key to an arbitrary URL. main.cjs supplies it only
+        // when the URL exactly matches the verified locally managed cloud service.
+        const base=new URL(mcpUrl).origin;
+        const res=await this.fetcher(base+'/pair-owner-approve',{
+          method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({request_id:session.requestId,poll_secret:session.pollSecret,
+            owner_secret:ownerKey}),signal:AbortSignal.timeout(12000)
+        });
+        const result=await res.json().catch(()=>({}));
+        if(!res.ok||result.approved!==true)throw Error(result.error||'CLOUD_AUTO_PAIR_OWNER_FAILED');
+      }else await openExternal(session.approvalUrl);
+    }catch(e){
+      this.autoPairPending=null;this.phase='failed';
+      this.lastError=String(e?.message||'CLOUD_AUTO_PAIR_FAILED').slice(0,100);
+      this.onChange(this.status());throw e;
+    }
+    // Poll in the app process; no ChatGPT conversation, clipboard or separate code needed.
+    void (async()=>{
+      while(this.autoPairPending===session && Date.now()<session.expiresAt){
+        await new Promise(resolve=>setTimeout(resolve,2500));
+        if(this.autoPairPending!==session)return;
+        try{
+          const status=await pollDevicePairing({session,fetcher:this.fetcher});
+          if(status.status==='pending')continue;
+          if(status.device_id!==this.identity.id)throw Error('CLOUD_AUTO_PAIR_IDENTITY_MISMATCH');
+          this.pairStore.save(session.mcpUrl,session.token);
+          this.autoPairPending=null;
+          this.mcpUrl=session.mcpUrl;
+          const saved=this.pairStore.read();
+          if(!saved)throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
+          this.start({enabled:true,url:saved.agentUrl,token:saved.token});
+          void this.refreshDevices();
+          return;
+        }catch(e){
+          if(['CLOUD_AUTO_PAIR_STATUS_FAILED','CLOUD_PAIR_REQUEST_LIMIT'].includes(e.message))continue;
+          this.autoPairPending=null;this.phase='failed';
+          this.lastError=String(e.message||'CLOUD_AUTO_PAIR_FAILED').slice(0,100);
+          this.onChange(this.status());return;
+        }
+      }
+      if(this.autoPairPending===session){
+        this.autoPairPending=null;this.phase='failed';
+        this.lastError='CLOUD_AUTO_PAIR_EXPIRED';this.onChange(this.status());
+      }
+    })();
+    return this.status();
   }
   async refreshDevices() {
     if(this.devicesPromise)return this.devicesPromise;
@@ -83,6 +179,10 @@ class CloudRouterService {
             throw Error('CLOUD_ROSTER_RESPONSE_INVALID');
           return {device_id:x.device_id,name:x.name,platform:x.platform,
             online:x.online,current:x.device_id===this.identity.id,
+            os_version:typeof x.os_version==='string'&&x.os_version.length<=100&&
+              !/[\x00-\x1f]/.test(x.os_version)?x.os_version:'',
+            harness_version:typeof x.harness_version==='string'&&
+              /^[0-9A-Za-z.+-]{1,32}$/.test(x.harness_version)?x.harness_version:'',
             paired_at:Number.isFinite(x.paired_at)?x.paired_at:null};
         });
         this.devicesUpdatedAt=Date.now();this.devicesError='';
@@ -100,14 +200,15 @@ class CloudRouterService {
     return this.manager.call(name, args);
   }
   status() {
-    return {enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,
+    return {paused:this.paused,enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,
       connected: Boolean(this.agent?.connected), device_id: this.identity.id,
       device_name: this.identity.name, platform: this.identity.platform,
+      local_harness_version:LOCAL_VERSION, local_os_version:this.localOsVersion,
       paired:Boolean(this.mcpUrl),...(this.mcpUrl?{mcp_url:this.mcpUrl}:{}),
       devices:this.devices,devicesUpdatedAt:this.devicesUpdatedAt,
       devicesError:this.devicesError,devicesRefreshing:this.devicesRefreshing,
       ...(this.lastError ? {error: this.lastError} : {})};
   }
-  stop() { this.agent?.close(); this.agent = null; this.phase = 'disabled'; this.lastError = ''; }
+  stop() { this.autoPairPending=null; this.agent?.close(); this.agent = null; this.phase = 'disabled'; this.lastError = ''; }
 }
 module.exports = {CloudRouterService};

@@ -2,7 +2,7 @@
 // Device-side transport. The desktop app must supply an authorized local MCP executor.
 // A disconnected call is never replayed; the cloud reports the outcome as unknown.
 const VALID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
-function connectAgent({url, deviceId, name, platform, token, execute, allowedTools, WebSocketImpl = globalThis.WebSocket, reconnectMs = 2000, onStatusChange = () => {}}) {
+function connectAgent({url, deviceId, name, platform, harnessVersion, osVersion, token, execute, allowedTools, WebSocketImpl = globalThis.WebSocket, reconnectMs = 2000, onStatusChange = () => {}}) {
   if (!/^wss:\/\//.test(url) || !VALID.test(deviceId || '') || typeof token !== 'string' ||
       token.length < 24 || typeof execute !== 'function' || typeof WebSocketImpl !== 'function')
     throw new Error('INVALID_AGENT_CONFIGURATION');
@@ -15,7 +15,7 @@ function connectAgent({url, deviceId, name, platform, token, execute, allowedToo
     const socket = ws;
     socket.addEventListener('open', () => {
       if (closed || socket !== ws) return;
-      socket.send(JSON.stringify({type: 'register', device_id: deviceId, name, platform, token}));
+      socket.send(JSON.stringify({type: 'register', device_id: deviceId, name, platform, harness_version:harnessVersion, os_version:osVersion, token}));
     });
     socket.addEventListener('message', async event => {
       if (socket !== ws || closed || typeof event.data !== 'string') return;

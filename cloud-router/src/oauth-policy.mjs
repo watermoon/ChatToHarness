@@ -1,3 +1,6 @@
+// Allow only the known ChatGPT OAuth callback origin in form-action redirect chains.
+// Chromium enforces form-action on POST 302 redirects, not just the form target.
+export const CONSENT_CSP="default-src 'none'; form-action 'self' https://chatgpt.com; base-uri 'none'; frame-ancestors 'none'";
 // Shared rules for our single-owner OAuth authorization and MCP resource Workers.
 // No Cloudflare Access, GitHub account, or user-controlled authentication headers.
 export const htmlEscape = value => String(value).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');

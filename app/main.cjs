@@ -34,6 +34,8 @@ const indexURL=pathToFileURL(path.join(__dirname,'index.html')).href;
 const resources=(testMode&&process.env.LOCALHARNESS_RESOURCES)|| (app.isPackaged?process.resourcesPath:(process.env.LOCALHARNESS_RESOURCES||path.join(__dirname,'..','resources')));
 const links=Object.freeze({
   platform:'https://platform.openai.com/settings/organization/tunnels',
+  'cloudflare-workers':'https://dash.cloudflare.com/',
+  'cloudflare-device-login':'https://dash.cloudflare.com/oauth2/device',
   chatgpt:'https://chatgpt.com/',
   codex:'https://developers.openai.com/codex/',
   responses:'https://developers.openai.com/api/docs/guides/secure-mcp-tunnels#connect-from-the-responses-api',
@@ -277,8 +279,19 @@ function registerIPC(){
   bind('cloud-bootstrap-discover',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.preview(input);});
   bind('cloud-bootstrap-runtime-check',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.runtimeCheck();});
   bind('cloud-bootstrap-start',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.init(input);});
+  bind('cloud-bootstrap-reinitialize',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.reinitialize();});
+  bind('cloud-bootstrap-reset',async input=>{
+    if(!cloudBootstrap||!cloudRouter)throw Error('CLOUD_SETUP_UNAVAILABLE');
+    return cloudBootstrap.resetCloud({confirmation:input?.confirmation,
+      clearLocal:()=>cloudRouter.clearLocalPairing()});
+  });
+  bind('cloud-bootstrap-rotate-owner',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.rotateOwnerKey(input);});
   bind('cloud-bootstrap-copy-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.copyOwnerKey(require('electron').clipboard);});
+  bind('cloud-bootstrap-reveal-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.ownerKey();});
   bind('cloud-router-list-devices',async()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.refreshDevices();});
+  bind('cloud-router-disconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.disconnect();});
+  bind('cloud-router-reconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.reconnect();});
+  bind('cloud-router-auto-pair',async input=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.autoPair({mcpUrl:input?.mcpUrl,openExternal:url=>shell.openExternal(url)});});
   bind('cloud-router-pair',input=>action(async()=>{
     if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');
     await cloudRouter.pair(input);
@@ -368,7 +381,16 @@ else{
       const {CloudRouterService}=require('./cloud-router-service.cjs');
       const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
       cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,
-        pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish});
+        pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish,
+         getOwnerKey:requestedUrl=>{
+           try{
+             // Only the already-verified cloud this app initialized/rotated.
+             const status=cloudBootstrap?.status();
+             if(!cloudBootstrap?.record?.complete ||status?.remote!=='deployed'||
+                status?.mcp_url!==requestedUrl)return '';
+             return cloudBootstrap.ownerKey();
+           }catch{return '';}
+         }});
       const {CloudBootstrap}=require('./cloud-bootstrap.cjs');
       cloudBootstrap=new CloudBootstrap({home,safeStorage,nodePath:runtime.paths.node,
         sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),onChange:publish});

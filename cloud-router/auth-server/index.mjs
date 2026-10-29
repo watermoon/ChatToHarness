@@ -3,7 +3,7 @@
 // during browser authorization. The secret is never included in issued tokens.
 import {WorkerEntrypoint} from 'cloudflare:workers';
 import {OAuthAuthorizationServer, AuthorizationError} from '@cloudflare/workers-oauth-provider';
-import {htmlEscape as escape,verifyOwnerSecret,ownerSecretConfigured,ownerSubject,canonical as canonicalUrl} from '../src/oauth-policy.mjs';
+import {htmlEscape as escape,verifyOwnerSecret,ownerSecretConfigured,ownerSubject,canonical as canonicalUrl,CONSENT_CSP} from '../src/oauth-policy.mjs';
 
 const SCOPES=['mcp:read'];
 function provider(env) {
@@ -53,7 +53,7 @@ async function authorize(request,env,oauth) {
       consent.headers.set('Referrer-Policy','no-referrer');
       consent.headers.set('X-Content-Type-Options','nosniff');
       consent.headers.set('X-Frame-Options','DENY');
-      consent.headers.set('Content-Security-Policy',"default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+      consent.headers.set('Content-Security-Policy',CONSENT_CSP);
       return new Response(consentPage(details,consent.handle),{headers:consent.headers});
     }
     if(request.method==='POST') {
@@ -91,6 +91,10 @@ export default class ChatToHarnessAuth extends WorkerEntrypoint {
     // Discovery, token exchange, DCR and revocation are public OAuth protocol
     // endpoints; they do NOT grant owner identity without the owner secret.
     return oauth.fetch(request,this.env,this.ctx);
+  }
+  // Private service-binding RPC; never exposed as a public HTTP endpoint.
+  verifyPairingOwnerKey(secret) {
+    return verifyOwnerSecret(secret,this.env);
   }
   validateToken(resource,token) {
     return provider(this.env).validateToken(resource,token,this.env);

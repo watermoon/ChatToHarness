@@ -49,7 +49,7 @@ test('multiple accounts require explicit choice, never arbitrary first account',
  const choice=await discoverCloudflare({fetcher:fixture.fetcher,tokenOutput:output});
  assert.equal(choice.needs,'account');
  assert.equal(choice.accounts.length,2);
- assert.equal(fixture.calls.length,1);
+ assert.ok(fixture.calls.length>=1); // read-only Worker inventory checks are allowed to identify a unique existing service
  const selected=await discoverCloudflare({fetcher:fixture.fetcher,tokenOutput:output,accountId:TWO});
  assert.equal(selected.accountId,TWO);
  assert.equal(selected.subdomain,'other');
@@ -72,8 +72,10 @@ test('Cloudflare discovery refuses failed responses and never invents a subdomai
  await assert.rejects(()=>discoverCloudflare({tokenOutput:output,
   fetcher:async()=>({status:403})}),/CLOUD_API_UNAVAILABLE/);
  const fixture=apiFixture({domains:{[ONE]:null}});
- await assert.rejects(()=>discoverCloudflare({fetcher:fixture.fetcher,tokenOutput:output}),
-  /CLOUD_SUBDOMAIN_NOT_CONFIGURED/);
+ const missing=await discoverCloudflare({fetcher:fixture.fetcher,tokenOutput:output});
+ assert.equal(missing.needs,'subdomain');
+ assert.equal(missing.subdomain,'');
+ assert.match(missing.suggestedSubdomain,/^cth-[a-f0-9]{8}$/);
 });
 
 test('authenticated Workers inventory distinguishes absence, partial deployment and complete deployment',async()=>{

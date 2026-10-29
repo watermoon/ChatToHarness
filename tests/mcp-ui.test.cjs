@@ -100,6 +100,7 @@ async function rendererFixture(state = initialState(), overrides = {}, clipboard
   vm.runInNewContext(renderer, {
     window: { localHarness: api, CTHI18n: { ...i18n, documentTranslator: () => () => {} }, addEventListener() {} },
     document, navigator: { language: 'zh-CN', clipboard },
+    setTimeout:()=>1,clearTimeout:()=>{},
   }, { filename: 'renderer.js' });
   await settled();
   return { document, calls, node: id => document.getElementById(id), update: value => subscriber(value), api };
@@ -746,24 +747,42 @@ test('cloud panels appear after secure tunnel and device selector shows name onl
   const selfId='cu-00000000-0000-4000-8000-000000000001';
   const moonId='cu-00000000-0000-4000-8000-000000000002';
   state.cloudRouter={paired:true,connected:true,phase:'ready',device_name:'MacBook',
-    device_id:selfId,platform:'darwin',devices:[
+    device_id:selfId,platform:'darwin',
+    local_harness_version:'0.8.1',local_os_version:'macOS 14.6.1',devices:[
       {device_id:selfId,name:'MacBook',platform:'darwin',online:true,current:true},
-      {device_id:moonId,name:'MOON',platform:'win32',online:false,current:false}
+      {device_id:moonId,name:'MOON',platform:'win32',online:false,current:false,
+       os_version:'Windows 11 (Build 22631)',harness_version:'0.8.0'}
     ]};
   const f=await rendererFixture(state);
   f.update(state);
   assert.equal(f.node('cloud-device-selected').textContent,'MacBook');
   assert.match(f.node('cloud-current-device').textContent,/MacBook/);
-  assert.ok(f.node('cloud-current-device').textContent.includes(selfId));
+  assert.equal(f.node('cloud-current-device').textContent.includes(selfId),false);
+  assert.ok(f.node('cloud-current-device-id').textContent.includes(selfId));
   const entries=f.node('cloud-device-list').children;
   assert.deepEqual(entries.map(x=>x.children[0].textContent),[
     'MacBook ('+selfId+')','MOON ('+moonId+')']);
+  assert.equal(entries[0].className.includes('is-current-device'),true);
+  assert.equal(entries[0].children[0].children[0].tagName,'STRONG',
+    'the actual current device name is bold');
+  assert.equal(entries[1].children[0].children[0].tagName,'SPAN');
+  assert.equal(entries[0].children[1].children[0].textContent,'macOS 14.6.1');
+  assert.equal(entries[0].children[1].children[1].textContent,'Harness 0.8.1');
+  assert.equal(entries[0].children[1].children[2].textContent,'在线');
+  assert.equal(entries[0].children[1].children[2].className,'cloud-device-online');
+  assert.equal(entries[0].children[1].children[3].textContent,'本机');
+  assert.equal(entries[1].children[1].children[0].textContent,'Windows 11 (Build 22631)');
+  assert.equal(entries[1].children[1].children[1].textContent,'Harness 0.8.0');
+  assert.equal(entries[1].children[1].children[2].textContent,'离线');
+  assert.equal(entries[1].children[1].children[2].className,'cloud-device-offline');
+  assert.equal(entries[1].children[1].children.length,3,'remote device must not be labelled as local');
   f.node('cloud-device-picker').open=true;
   await entries[1].children[0].emit('click');
   assert.equal(f.node('cloud-device-selected').textContent,'MOON');
   assert.equal(f.node('cloud-device-picker').open,false);
-  assert.ok(f.node('cloud-current-device').textContent.includes(selfId),
-    'current device identity remains visible after selecting a different device');
+  assert.ok(f.node('cloud-current-device-id').textContent.includes(selfId),
+    'current device ID remains available on demand after selecting another device');
+  assert.equal(f.node('cloud-pair-trigger').hidden,true);
 });
 test('cloud status distinguishes remote deployment from missing local owner credential',async()=>{
   const state=initialState();
@@ -774,4 +793,161 @@ test('cloud status distinguishes remote deployment from missing local owner cred
   assert.equal(f.node('cloud-setup-start').disabled,true);
   assert.ok(f.node('cloud-setup-status').textContent.includes('检测到云端服务已部署'));
   assert.ok(f.node('cloud-setup-status').textContent.includes('本机尚未保存所有者密钥'));
+});
+
+test('owner card gates copy and temporary reveal on a saved key',async()=>{
+ const state=initialState();
+ state.cloudBootstrap={phase:'already_deployed',remote:'deployed',hasOwnerKey:false,busy:false,accountOptions:[],kvOptions:[]};
+ let copied=0,revealed=0;
+ const f=await rendererFixture(state,{async cloudBootstrapCopyKey(){copied++;},async cloudBootstrapRevealKey(){revealed++;return 'a'.repeat(64);}});
+ f.update(state);
+ assert.equal(f.node('cloud-owner-key-status').textContent,'未保存');
+ assert.equal(f.node('cloud-setup-copy-key').disabled,true);
+ assert.equal(f.node('cloud-setup-reveal-key').disabled,true);
+ assert.equal(copied+revealed,0);
+ state.cloudBootstrap.hasOwnerKey=true;f.update(state);
+ assert.equal(f.node('cloud-setup-copy-key').disabled,false);
+ assert.equal(f.node('cloud-setup-reveal-key').disabled,false);
+ await f.node('cloud-setup-copy-key').emit('click');
+ assert.equal(copied,1);
+ assert.equal(revealed,0);
+});
+
+test('cloud setup shows only missing-subdomain input and a concrete action, with no implicit deployment',async()=>{
+ const state=initialState();
+ state.cloudBootstrap={phase:'choose_subdomain',remote:'unchecked',busy:false,hasOwnerKey:false,
+   accountOptions:[{id:'b'.repeat(32),name:'Account'}],accountId:'b'.repeat(32),
+   kvOptions:[],suggestedSubdomain:'cth-bbbbbbbb',
+   guidance:{code:'choose_subdomain',step:0,totalSteps:6}};
+ let starts=0;
+ const f=await rendererFixture(state,{async cloudBootstrapStart(){starts++;return state.cloudBootstrap;}});
+ f.update(state);
+ assert.equal(f.node('cloud-subdomain-picker').hidden,false);
+ assert.equal(f.node('cloud-subdomain-input').value,'cth-bbbbbbbb');
+ assert.equal(f.node('cloud-account-picker').hidden,true);
+ assert.equal(f.node('cloud-kv-picker').hidden,true);
+ assert.equal(f.node('cloud-setup-start').disabled,false);
+ assert.match(f.node('cloud-setup-guidance').textContent,/workers.dev 子域名/);
+ assert.equal(starts,0,'discovery should not mutate Cloudflare');
+ state.cloudBootstrap.phase='authorize_browser';
+ state.cloudBootstrap.guidance={code:'login',step:1,totalSteps:6,helpUrl:'https://dash.cloudflare.com/oauth2/device'};
+ state.cloudBootstrap.loginCode='jPqK6Qvs';
+ f.update(state);
+ assert.equal(f.node('cloud-subdomain-picker').hidden,true);
+ assert.equal(f.node('cloud-login-code').hidden,false);
+ assert.match(f.node('cloud-login-code').textContent,/jPqK6Qvs/);
+ assert.equal(f.node('cloud-login-open').hidden,false);
+ state.cloudBootstrap.phase='ready';state.cloudBootstrap.remote='deployed';state.cloudBootstrap.hasOwnerKey=true;
+ state.cloudBootstrap.guidance={code:'ready',step:0,totalSteps:6};state.cloudBootstrap.loginCode='';
+ f.update(state);
+ assert.equal(f.node('cloud-login-code').hidden,true);
+ assert.equal(f.node('cloud-login-code').textContent,'');
+});
+
+test('pair dialog is available only before pairing and manual code is shown on demand',async()=>{
+ const state=initialState();
+ state.cloudRouter={paired:false,connected:false,phase:'disabled',device_name:'MacBook',
+   device_id:'cu-00000000-0000-4000-8000-000000000001',devices:[]};
+ const f=await rendererFixture(state);
+ f.update(state);
+ assert.equal(f.node('cloud-pair-trigger').hidden,false);
+ assert.equal(f.node('cloud-manual-pairing').hidden,true);
+ await f.node('cloud-pair-trigger').emit('click');
+ assert.equal(f.node('cloud-pair-dialog').open,true);
+ assert.equal(f.node('cloud-manual-pairing').hidden,true);
+ await f.node('cloud-manual-mode-toggle').emit('click');
+ assert.equal(f.node('cloud-manual-pairing').hidden,false);
+ assert.equal(f.node('cloud-manual-mode-toggle').attributes['aria-expanded'],'true');
+ await f.node('cloud-pair-dialog-close').emit('click');
+ assert.equal(f.node('cloud-pair-dialog').open,false);
+ assert.equal(f.node('cloud-manual-pairing').hidden,true);
+ state.cloudRouter.paired=true;state.cloudRouter.connected=true;state.cloudRouter.phase='ready';
+ f.update(state);
+ assert.equal(f.node('cloud-pair-trigger').hidden,true);
+ await f.node('cloud-pair-trigger').emit('click');
+ assert.equal(f.node('cloud-pair-dialog').open,false);
+});
+
+test('paired cloud device can disconnect and reconnect without losing pairing',async()=>{
+ const state=initialState();
+ state.cloudRouter={paired:true,paused:false,connected:true,phase:'ready',
+   device_name:'MacBook',device_id:'cu-00000000-0000-4000-8000-000000000001',devices:[]};
+ let disconnects=0,reconnects=0;
+ const f=await rendererFixture(state,{
+   async cloudRouterDisconnect(){
+     disconnects++;state.cloudRouter={...state.cloudRouter,paused:true,connected:false,phase:'disabled'};
+     return state.cloudRouter;
+   },
+   async cloudRouterReconnect(){
+     reconnects++;state.cloudRouter={...state.cloudRouter,paused:false,connected:false,phase:'connecting'};
+     return state.cloudRouter;
+   }
+ });
+ f.update(state);
+ assert.equal(f.node('cloud-device-disconnect').hidden,false);
+ assert.equal(f.node('cloud-device-reconnect').hidden,true);
+ assert.equal(f.node('cloud-pair-trigger').hidden,true);
+ await f.node('cloud-device-disconnect').emit('click');
+ assert.equal(disconnects,1);
+ assert.equal(f.node('cloud-device-disconnect').hidden,true);
+ assert.equal(f.node('cloud-device-reconnect').hidden,false);
+ assert.equal(f.node('cloud-pair-status').textContent,'已断开');
+ assert.equal(f.node('cloud-pair-trigger').hidden,true);
+ await f.node('cloud-device-reconnect').emit('click');
+ assert.equal(reconnects,1);
+ assert.equal(f.node('cloud-device-disconnect').hidden,true);
+ assert.equal(f.node('cloud-device-reconnect').hidden,false);
+ assert.equal(f.node('cloud-device-reconnect').disabled,true,'avoid repeated connect during startup');
+ assert.equal(f.node('cloud-pair-status').textContent,'正在连接');
+ state.cloudRouter.connected=true;state.cloudRouter.phase='ready';f.update(state);
+ assert.equal(f.node('cloud-device-disconnect').hidden,false);
+ assert.equal(f.node('cloud-device-reconnect').hidden,true);
+});
+test('cloud service reinitialization requires deployment and local Owner Key',async()=>{
+ const state=initialState();
+ state.cloudBootstrap={phase:'ready',remote:'deployed',hasOwnerKey:true,
+   busy:false,accountOptions:[],kvOptions:[]};
+ const f=await rendererFixture(state);
+ f.update(state);
+ assert.equal(f.node('cloud-setup-reinitialize').disabled,false);
+ state.cloudBootstrap.hasOwnerKey=false;f.update(state);
+ assert.equal(f.node('cloud-setup-reinitialize').disabled,true);
+ state.cloudBootstrap.hasOwnerKey=true;state.cloudBootstrap.remote='not_deployed';f.update(state);
+ assert.equal(f.node('cloud-setup-reinitialize').disabled,true);
+});
+
+test('single current-device action switches among pair, connect and disconnect',async()=>{
+ const state=initialState();
+ state.cloudRouter={paired:false,connected:false,phase:'disabled',
+   device_name:'desktop',device_id:'cu-00000000-0000-4000-8000-000000000001',devices:[]};
+ const f=await rendererFixture(state);
+ f.update(state);
+ assert.equal(f.node('cloud-pair-trigger').hidden,false);
+ assert.equal(f.node('cloud-device-reconnect').hidden,true);
+ assert.equal(f.node('cloud-device-disconnect').hidden,true);
+ state.cloudRouter.paired=true;state.cloudRouter.paused=true;f.update(state);
+ assert.equal(f.node('cloud-pair-trigger').hidden,true);
+ assert.equal(f.node('cloud-device-reconnect').hidden,false);
+ assert.equal(f.node('cloud-device-disconnect').hidden,true);
+ state.cloudRouter.paused=false;state.cloudRouter.connected=true;f.update(state);
+ assert.equal(f.node('cloud-pair-trigger').hidden,true);
+ assert.equal(f.node('cloud-device-reconnect').hidden,true);
+ assert.equal(f.node('cloud-device-disconnect').hidden,false);
+});
+
+test('cloud reset stays disabled until managed and requires typed consent',async()=>{
+ const state=initialState();
+ state.cloudBootstrap={phase:'ready',remote:'deployed',hasOwnerKey:true,
+   busy:false,accountOptions:[],kvOptions:[]};
+ const f=await rendererFixture(state);
+ f.update(state);
+ assert.equal(f.node('cloud-setup-reset-trigger').disabled,false);
+ await f.node('cloud-setup-reset-trigger').emit('click');
+ assert.equal(f.node('cloud-reset-dialog').open,true);
+ assert.equal(f.node('cloud-reset-submit').disabled,true);
+ state.cloudBootstrap.hasOwnerKey=false;f.update(state);
+ assert.equal(f.node('cloud-setup-reset-trigger').disabled,true);
+ state.cloudBootstrap.hasOwnerKey=true;state.cloudBootstrap.remote='partial';
+ state.cloudBootstrap.resetInProgress=true;f.update(state);
+ assert.equal(f.node('cloud-setup-reset-trigger').disabled,false);
 });

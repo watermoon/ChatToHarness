@@ -2,6 +2,7 @@
 import {OAuthResourceServer, insufficientScope} from '@cloudflare/workers-oauth-provider';
 import {authorizedWorker, DeviceHub} from './worker.mjs';
 import {authorizedIdentity, canonical} from './oauth-policy.mjs';
+import {devicePairHttp} from './device-pair-http.mjs';
 export {DeviceHub};
 
 function resourceServer(env) {
@@ -27,10 +28,31 @@ function resourceServer(env) {
   });
 }
 export default {
-  fetch(request, env, ctx) {
+  async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     if (path === '/health' && request.method === 'GET')
       return Response.json({ok:true,component:'chattoharness-cloud-router'});
+    // New-device enrollment is a separate owner-confirmed browser flow.
+    // These are not MCP endpoints; the approval route verifies Owner Key
+    // privately through AUTH_SERVER, never through anonymous metadata.
+    if(path==='/owner-reset-device-hub'){
+      if(request.method!=='POST')return new Response('Method not allowed',{status:405});
+      const raw=await request.text();
+      if(raw.length>512)return Response.json({error:'RESET_INVALID'},{status:413});
+      let body;try{body=JSON.parse(raw);}catch{return Response.json({error:'RESET_INVALID'},{status:400});}
+      if(!/^[a-f0-9]{64}$/.test(body?.owner_secret||'')||
+         !env.AUTH_SERVER||typeof env.AUTH_SERVER.verifyPairingOwnerKey!=='function'||
+         !await env.AUTH_SERVER.verifyPairingOwnerKey(body.owner_secret))
+        return Response.json({error:'RESET_UNAUTHORIZED'},{status:403});
+      // Only this protected endpoint can reach this internal DO operation.
+      const response=await env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName('default'))
+        .fetch(new Request('https://hub.internal/internal-reset-device-hub',{method:'POST'}));
+      if(!response.ok)return Response.json({error:'RESET_DEVICE_HUB_FAILED'},{status:502});
+      return Response.json({cleared:(await response.json()).cleared===true},
+        {headers:{'cache-control':'no-store'}});
+    }
+    if(['/pair-request','/pair-status','/pair-owner-approve','/device-approve'].includes(path))
+      return devicePairHttp(request,env);
     // Agent registration has separate per-device authentication; not an MCP endpoint.
     if (path === '/agent') return authorizedWorker.fetch(request,env);
     // Device-bound read-only roster: verified again by the Durable Object.

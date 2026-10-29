@@ -54,3 +54,15 @@ test('consent HTML escaping prevents untrusted client metadata injection',async(
  const {htmlEscape}=await policy();
  assert.equal(htmlEscape('<img src=x onerror="a()">'),'&#60;img src=x onerror=&#34;a()&#34;&#62;');
 });
+
+test('OAuth consent CSP permits Chrome to follow POST 302 to ChatGPT without opening arbitrary form targets',async()=>{
+ const {CONSENT_CSP}=await policy();
+ assert.match(CONSENT_CSP,/form-action 'self' https:\/\/chatgpt\.com(?:;|$)/);
+ assert.match(CONSENT_CSP,/default-src 'none'/);
+ assert.match(CONSENT_CSP,/base-uri 'none'/);
+ assert.match(CONSENT_CSP,/frame-ancestors 'none'/);
+ assert.doesNotMatch(CONSENT_CSP,/form-action[^;]*\*/);
+ assert.doesNotMatch(CONSENT_CSP,/unsafe-inline|https:\/\/\*|http:\/\//);
+ const authSource=require('node:fs').readFileSync(resolve(__dirname,'../cloud-router/auth-server/index.mjs'),'utf8');
+ assert.match(authSource,/consent\.headers\.set\('Content-Security-Policy',CONSENT_CSP\)/);
+});

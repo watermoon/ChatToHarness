@@ -23,7 +23,7 @@ async function fixture() {
   const env = {MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
   const hub = new DeviceHub(ctx,env), tokens=new Map();
   env.DEVICE_HUB = {idFromName: n => n, get: () => ({fetch: req => hub.fetch(typeof req === 'string' ? new Request(req) : req)})};
-  const register = async (device_id, name = device_id, invalidToken = null) => {
+  const register = async (device_id, name = device_id, invalidToken = null, metadata = {}) => {
     if(!tokens.has(device_id)){
       const code=await hub.fetch(new Request('https://hub.internal/pair-create',{method:'POST'}));
       const {pairing_code}=await code.json();
@@ -34,6 +34,7 @@ async function fixture() {
     }
     const ws = new Socket(); sockets.push(ws);
     await hub.webSocketMessage(ws, JSON.stringify({type: 'register', device_id, name, platform: 'darwin',
+      ...metadata,
       token: invalidToken===null?tokens.get(device_id):invalidToken}));
     return ws;
   };
@@ -140,4 +141,21 @@ test('paired device roster includes offline entries but requires this device bea
   assert.deepEqual(devices.map(x=>[x.device_id,x.online]),[['mac',true],['moon',false]]);
   assert.equal(devices.some(x=>'hash' in x||'device_token' in x),false);
   assert.ok(devices.every(x=>Number.isFinite(x.paired_at)));
+});
+
+test('registered OS product and Harness versions appear in paired roster; old peers remain compatible',async()=>{
+ const f=await fixture();
+ await f.register('mac','MacBook',undefined,{harness_version:'0.8.1',os_version:'macOS 14.6.1'});
+ await f.register('moon','MOON');
+ const res=await f.hub.fetch(new Request('https://hub.internal/paired-devices',{
+   headers:{'x-device-id':'mac','authorization':'Bearer '+f.tokens.get('mac')}
+ }));
+ assert.equal(res.status,200);
+ const devices=await res.json();
+ const current=devices.find(x=>x.device_id==='mac');
+ const older=devices.find(x=>x.device_id==='moon');
+ assert.equal(current.harness_version,'0.8.1');
+ assert.equal(current.os_version,'macOS 14.6.1');
+ assert.equal(older.harness_version,'');
+ assert.equal(older.os_version,'');
 });

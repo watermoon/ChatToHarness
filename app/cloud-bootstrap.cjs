@@ -1,5 +1,5 @@
 'use strict';
-const {discoverCloudflare,inspectWorkerScripts}=require('./cloudflare-discovery.cjs');
+const {discoverCloudflare,inspectWorkerScripts,createWorkersSubdomain}=require('./cloudflare-discovery.cjs');
 // Desktop-only first-run bootstrap. Does not depend on MCP, Computer Use or shell access.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
@@ -32,14 +32,14 @@ function config(source,s,kv,role,accountId) {
  }
  return v;
 }
-function run(node,script,args,{cwd,input,timeoutMs=180000}={}) {
+function run(node,script,args,{cwd,input,timeoutMs=180000,onOutput}={}) {
  return new Promise((resolve,reject)=>{
   const child=spawn(node,[script,...args],{cwd,windowsHide:true,
    stdio:['pipe','pipe','pipe'],env:{...process.env,WRANGLER_SEND_METRICS:'false',NO_COLOR:'1'}});
   let out='',err='',done=false;
   const limit=(s,chunk)=>(s+String(chunk)).slice(-24576);
-  child.stdout.on('data',c=>{out=limit(out,c);});
-  child.stderr.on('data',c=>{err=limit(err,c);});
+  child.stdout.on('data',c=>{out=limit(out,c);onOutput?.(String(c));});
+  child.stderr.on('data',c=>{err=limit(err,c);onOutput?.(String(c));});
   const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);
    error?reject(error):resolve(result);};
   const timer=setTimeout(()=>{child.kill();finish(Error('CLOUD_WRANGLER_TIMEOUT'));},timeoutMs);
@@ -62,7 +62,7 @@ class CloudBootstrap {
   this.phase='idle';this.error='';this.busy=false;
   this.remote='unchecked';this.remoteCheckedAt=null;this.workerInventory=null;
   this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
-  this.selectedKvId='';
+  this.selectedKvId='';this.suggestedSubdomain='';this.loginCode='';this.loginOutputTail='';
   this.record=this.read();if(this.record?.complete)this.phase='checking';
  }
  read(){
@@ -74,10 +74,16 @@ class CloudBootstrap {
    return d;
   }catch{return null;}
  }
- status(){return {phase:this.phase,error:this.error,busy:this.busy,
+ status(){return {phase:this.phase,error:this.error,busy:this.busy,resetInProgress:Boolean(this.record?.resetStage),
   subdomain:this.record?.subdomain||this.discoveredSubdomain,
   accountId:this.record?.accountId||this.discoveredAccountId,
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
+  suggestedSubdomain:this.suggestedSubdomain,
+  loginCode:this.phase==='authorize_browser'?this.loginCode:'',
+  guidance:require('./cloud-setup-guidance.cjs').cloudSetupGuidance({
+    phase:this.phase,remote:this.remote,error:this.error,
+    hasOwnerKey:Boolean(this.record?.encryptedKey)
+  }),
   kvId:this.selectedKvId||this.record?.kvId,
   mcp_url:this.remote==='deployed'&&this.discoveredSubdomain?
     urls(this.discoveredSubdomain).mcp:this.record?urls(this.record.subdomain).mcp:'',
@@ -100,12 +106,12 @@ class CloudBootstrap {
   const wranglerPresent=fs.existsSync(wrangler);
   return {ready:nodePresent&&wranglerPresent,nodePresent,wranglerPresent};
  }
- async cli(args,input,timeoutMs){
+ async cli(args,input,timeoutMs,onOutput){
   const check=this.runtimeCheck();
   if(!check.nodePresent)throw Error('CLOUD_NODE_RUNTIME_MISSING');
   if(!check.wranglerPresent)throw Error('CLOUD_WRANGLER_RUNTIME_MISSING');
   const script=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
-  const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs});
+  const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs,onOutput});
   if(res.code!==0)throw Error('CLOUD_WRANGLER_FAILED_'+args[0].toUpperCase());
   return res.stdout;
  }
@@ -153,8 +159,15 @@ class CloudBootstrap {
      if(code==='CLOUD_NODE_RUNTIME_MISSING'||code==='CLOUD_WRANGLER_RUNTIME_MISSING'
        ||code==='CLOUD_WRANGLER_START_FAILED'||code==='CLOUD_WRANGLER_TIMEOUT')throw error;
      if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
+     this.loginCode='';this.loginOutputTail='';
      this.phaseSet('authorize_browser');
-     await this.cli(['login','--device','--use-keyring'],undefined,360000);
+     await this.cli(['login','--device','--use-keyring'],undefined,360000,chunk=>{
+       this.loginOutputTail=(this.loginOutputTail+chunk).slice(-1600);
+       // Parse only the short Wrangler device code, never expose CLI output or tokens.
+       const m=this.loginOutputTail.match(/(?:enter the code\s*:|user_code=)\s*([A-Za-z0-9]{8,12})/i);
+       if(m&&this.loginCode!==m[1]){this.loginCode=m[1];this.onChange();}
+     });
+     this.loginCode='';this.loginOutputTail='';
      token=await this.cli(['auth','token','--json']);
    }
    const chosenAccount=input.accountId||this.record?.accountId||'';
@@ -166,6 +179,7 @@ class CloudBootstrap {
    this.discoveredAccountId=found.accountId||'';
    this.discoveredSubdomain=found.subdomain||'';
    this.selectedKvId=found.kvId||'';
+   this.suggestedSubdomain=found.suggestedSubdomain||'';
    this.workerInventory=null;
    if(!found.needs){
      try{
@@ -176,6 +190,7 @@ class CloudBootstrap {
      await this.checkRemote(found.subdomain,this.workerInventory);
    }else this.remote='unchecked';
    this.phaseSet(found.needs==='account'?'choose_account':
+     found.needs==='subdomain'?'choose_subdomain':
      found.needs==='kv'?'choose_kv':
      this.remote==='deployed'?
        (!this.record?.encryptedKey?'already_deployed':this.record.complete?'ready':'recovery_required'):
@@ -204,14 +219,93 @@ class CloudBootstrap {
    finally{this.busy=false;this.onChange();}
    return this.status();
  }
- async init(input){
+ async rotateOwnerKey(input={}){
   if(this.busy)throw Error('CLOUD_SETUP_BUSY');
   this.busy=true;this.error='';this.onChange();
   try{
    if(!this.safeStorage?.isEncryptionAvailable?.())throw Error('CLOUD_SECURE_STORAGE_REQUIRED');
    const found=await this.findOptions(input,true);
+   if(found.needs){this.phaseSet(found.needs==='account'?'choose_account':'choose_kv');return this.status();}
+   const s=subdomain(found.subdomain),accountId=found.accountId,kv=found.kvId;
+   if(!ID.test(accountId)||!ID.test(kv)||this.remote!=='deployed'||
+      this.workerInventory?.auth!==true||this.workerInventory?.router!==true)
+     throw Error('CLOUD_ROTATION_TARGET_UNVERIFIED');
+   if(this.record&&(this.record.subdomain!==s||this.record.kvId!==kv||
+      (this.record.accountId&&this.record.accountId!==accountId)))
+     throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
+   if(!this.record)this.record={schema:1,subdomain:s,accountId,kvId:kv,encryptedKey:'',complete:false};
+   if(!this.record.pendingEncryptedKey){
+    this.record.pendingEncryptedKey=this.safeStorage.encryptString(
+      crypto.randomBytes(32).toString('hex')).toString('base64');
+    this.save(); // Persist encrypted candidate before changing remote secret.
+   }
+   const candidate=this.safeStorage.decryptString(Buffer.from(this.record.pendingEncryptedKey,'base64'));
+   if(!KEY.test(candidate))throw Error('CLOUD_OWNER_KEY_INVALID');
+   const files=this.configs(s,kv,accountId);
+   this.phaseSet('rotating_owner');
+   // Update one existing Worker secret only. No code deploy, migrations or OAuth epoch change.
+   await this.cli(['secret','put','OWNER_AUTH_KEY','--config',files.auth],candidate);
+   this.record.encryptedKey=this.record.pendingEncryptedKey;
+   delete this.record.pendingEncryptedKey;
+   this.record.complete=false;this.save();
+   this.phaseSet('verifying');
+   if(await this.checkRemote(s,{auth:true,router:true})!=='deployed')
+     throw Error('CLOUD_REMOTE_VERIFICATION_FAILED');
+   this.record.complete=true;this.save();this.phaseSet('ready');
+  }catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_ROTATION_FAILED').split(':')[0].slice(0,100));}
+  finally{this.busy=false;this.onChange();}
+  return this.status();
+ }
+ async resetCloud(options){return require('./cloud-full-reset.cjs').resetManagedCloud(this,options);}
+ async reinitialize() {
+   if(this.busy)throw Error('CLOUD_SETUP_BUSY');
+   this.busy=true;this.error='';this.onChange();
+   try{
+     if(!this.safeStorage?.isEncryptionAvailable?.())throw Error('CLOUD_SECURE_STORAGE_REQUIRED');
+     const saved=this.record;
+     if(!saved?.complete||!saved.encryptedKey||!saved.subdomain||
+        !ID.test(saved.accountId||'')||!ID.test(saved.kvId||''))
+       throw Error('CLOUD_REINITIALIZE_REQUIRES_MANAGED_SERVICE');
+     // A stale or copied local config must not select a different deployed Worker.
+     const found=await this.findOptions({accountId:saved.accountId,kvId:saved.kvId},false);
+     if(found.needs||this.remote!=='deployed'||
+        found.accountId!==saved.accountId||found.kvId!==saved.kvId||
+        subdomain(found.subdomain)!==saved.subdomain||
+        this.workerInventory?.auth!==true||this.workerInventory?.router!==true)
+       throw Error('CLOUD_REINITIALIZE_TARGET_UNVERIFIED');
+     // Retain the existing Owner Key and KV contents, including device bindings.
+     const files=this.configs(saved.subdomain,saved.kvId,saved.accountId);
+     this.phaseSet('redeploying_auth');
+     await this.cli(['deploy','--keep-vars','--config',files.auth]);
+     this.phaseSet('redeploying_router');
+     await this.cli(['deploy','--keep-vars','--config',files.router]);
+     this.phaseSet('verifying');
+     if(await this.checkRemote(saved.subdomain,{auth:true,router:true})!=='deployed')
+       throw Error('CLOUD_REMOTE_VERIFICATION_FAILED');
+     this.phaseSet('ready');
+   }catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_REINITIALIZE_FAILED').split(':')[0].slice(0,100));}
+   finally{this.busy=false;this.onChange();}
+   return this.status();
+ }
+ async init(input){
+  if(this.busy)throw Error('CLOUD_SETUP_BUSY');
+  this.busy=true;this.error='';this.onChange();
+  try{
+   if(!this.safeStorage?.isEncryptionAvailable?.())throw Error('CLOUD_SECURE_STORAGE_REQUIRED');
+   let found=await this.findOptions(input,true);
+   if(found.needs==='subdomain'&&input?.subdomain){
+     const requested=subdomain(input.subdomain);
+     if(this.record?.subdomain&&this.record.subdomain!==requested)
+       throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
+     this.phaseSet('creating_subdomain');
+     const token=await this.cli(['auth','token','--json']);
+     await createWorkersSubdomain({fetcher:this.fetcher,tokenOutput:token,
+       accountId:found.accountId,subdomain:requested});
+     found=await this.findOptions({accountId:found.accountId},false);
+   }
    if(found.needs){
-     this.phaseSet(found.needs==='account'?'choose_account':'choose_kv');
+     this.phaseSet(found.needs==='account'?'choose_account':
+       found.needs==='subdomain'?'choose_subdomain':'choose_kv');
      return this.status();
    }
    const s=subdomain(found.subdomain),accountId=found.accountId;

@@ -180,3 +180,233 @@ test('cloud initialization self-check distinguishes absent Node and Wrangler wit
  assert.equal(s.calls.length,0);
  assert.equal((await s.bootstrap.preview()).error,'CLOUD_WRANGLER_RUNTIME_MISSING');
 });
+
+test('owner key rotation on a manually deployed remote keeps Workers, KV and devices untouched',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.fetcher=async(url)=>{
+  if(url.includes('api.cloudflare.com/')){
+   const result=url.endsWith('accounts?per_page=100')?[{id:'b'.repeat(32),name:'Test'}]:
+     url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:
+     url.includes('/storage/kv/namespaces')?[{id:kvId,title:'OAUTH_KV'}]:
+     url.endsWith('/workers/scripts')?[{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]:[];
+   return {status:200,json:async()=>({success:true,result})};
+  }
+  return {status:url.endsWith('/mcp')?401:200};
+ };
+ const result=await s.bootstrap.rotateOwnerKey({});
+ assert.equal(result.phase,'ready',result.error);
+ assert.equal(result.hasOwnerKey,true);
+ assert.equal(s.calls.filter(a=>a[0]==='deploy'||a[0]==='kv').length,0);
+ assert.deepEqual(s.calls.filter(a=>a[0]==='secret').map(a=>a.slice(0,3)),
+   [['secret','put','OWNER_AUTH_KEY']]);
+ assert.equal(s.inputs.length,1);
+ assert.match(s.inputs[0],/^[a-f0-9]{64}$/);
+ assert.equal(s.bootstrap.ownerKey(),s.inputs[0]);
+ const stored=fs.readFileSync(path.join(s.home,'cloudflare-bootstrap/credentials.json'),'utf8');
+ assert.ok(!stored.includes(s.inputs[0]));
+ assert.equal(s.bootstrap.record.kvId,kvId);
+});
+test('owner rotation refuses cloud without verified Worker inventory and never writes a secret',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ const result=await s.bootstrap.rotateOwnerKey({});
+ assert.equal(result.error,'CLOUD_ROTATION_TARGET_UNVERIFIED');
+ assert.equal(s.calls.some(a=>a[0]==='secret'),false);
+ assert.equal(s.bootstrap.record,null);
+});
+test('failed owner rotation retries the encrypted saved candidate, not a new random key',async(t)=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ s.bootstrap.fetcher=async(url)=>{
+  if(url.includes('api.cloudflare.com/')){
+   const result=url.endsWith('accounts?per_page=100')?[{id:'b'.repeat(32),name:'Test'}]:
+      url.includes('/workers/subdomain')?{subdomain:'watermoon3322'}:
+      url.includes('/storage/kv/namespaces')?[{id:kvId,title:'OAUTH_KV'}]:
+      [{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}];
+   return {status:200,json:async()=>({success:true,result})};
+  }
+  return {status:url.endsWith('/mcp')?401:200};
+ };
+ const runner=s.bootstrap.runner;
+ let fail=true;
+ s.bootstrap.runner=async(...args)=>{
+  if(args[2][0]==='secret'&&fail){fail=false;throw Error('CLOUD_WRANGLER_FAILED_SECRET');}
+  return runner(...args);
+ };
+ const first=await s.bootstrap.rotateOwnerKey({});
+ assert.equal(first.error,'CLOUD_WRANGLER_FAILED_SECRET');
+ assert.equal(first.hasOwnerKey,false);
+ const ciphertext=s.bootstrap.record.pendingEncryptedKey;
+ const second=await s.bootstrap.rotateOwnerKey({});
+ assert.equal(second.phase,'ready',second.error);
+ assert.equal(second.hasOwnerKey,true);
+ assert.equal(s.bootstrap.record.pendingEncryptedKey,undefined);
+ assert.equal(s.bootstrap.record.encryptedKey,ciphertext);
+});
+
+test('absent workers.dev subdomain requires an explicit action, then registers once without replacing existing resources',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ let activeSubdomain='',creates=0;
+ x.bootstrap.fetcher=async(url,opts={})=>{
+   if(url.includes('api.cloudflare.com/')){
+     let result;
+     if(url.endsWith('accounts?per_page=100'))result=[{id:'b'.repeat(32),name:'Account'}];
+     else if(url.includes('/workers/subdomain')){
+       if(opts.method==='PUT'){
+         assert.equal(activeSubdomain,'','never overwrite an existing subdomain');
+         activeSubdomain=JSON.parse(opts.body).subdomain;
+         creates++;
+       }
+       result={subdomain:activeSubdomain};
+     }else if(url.includes('/storage/kv/namespaces'))result=x.calls.some(c=>c[0]==='kv'&&c.includes('create'))?[{id:kvId,title:'OAUTH_KV'}]:[];
+     else if(url.endsWith('/workers/scripts'))
+       result=x.calls.some(c=>c[0]==='deploy'&&c.some(v=>String(v).endsWith('router.jsonc')))?
+         [{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}]:[];
+     else throw Error('MOCK_UNEXPECTED_API_REQUEST');
+     return {status:200,json:async()=>({success:true,result})};
+   }
+   const deployed=x.calls.some(c=>c[0]==='deploy'&&c.some(v=>String(v).endsWith('router.jsonc')));
+   return {status:deployed?(url.endsWith('/mcp')?401:200):404};
+ };
+ const found=await x.bootstrap.preview();
+ assert.equal(found.phase,'choose_subdomain');
+ assert.equal(found.suggestedSubdomain,'cth-'+'b'.repeat(8));
+ assert.equal(creates,0,'preflight must be read-only');
+ assert.equal(x.calls.some(c=>c[0]==='deploy'),false);
+ assert.equal(found.guidance.code,'choose_subdomain');
+ const initialized=await x.bootstrap.init({subdomain:found.suggestedSubdomain});
+ assert.equal(initialized.phase,'ready','init error: '+initialized.error);
+ assert.equal(initialized.ready,true);
+ assert.equal(creates,1);
+ assert.equal(initialized.subdomain,found.suggestedSubdomain);
+ assert.equal((await x.bootstrap.init({subdomain:'different-subdomain'})).phase,'ready');
+ assert.equal(creates,1,'a ready service cannot register a second account domain');
+});
+test('Cloudflare subdomain management refuses overwriting existing global account subdomain',async()=>{
+ const {createWorkersSubdomain}=require('../app/cloudflare-discovery.cjs');
+ let changed=false;
+ const result=()=>createWorkersSubdomain({
+   tokenOutput:JSON.stringify({type:'oauth',token:'f'.repeat(40)}),
+   accountId:'b'.repeat(32),subdomain:'different-subdomain',
+   fetcher:async(_url,opts)=>{
+     if(opts.method==='PUT')changed=true;
+     return {status:200,json:async()=>({success:true,result:{subdomain:'existing-account-domain'}})};
+   }
+ });
+ await assert.rejects(result(),/CLOUD_SUBDOMAIN_ALREADY_EXISTS/);
+ assert.equal(changed,false);
+});
+test('structured cloud guidance does not expose secrets and always provides a targeted next step',()=>{
+ const {cloudSetupGuidance}=require('../app/cloud-setup-guidance.cjs');
+ const cases=[
+   [{phase:'authorization_required',remote:'unchecked'},'login'],
+   [{phase:'choose_account',remote:'unchecked'},'choose_account'],
+   [{phase:'choose_subdomain',remote:'unchecked'},'choose_subdomain'],
+   [{phase:'choose_kv',remote:'unchecked'},'choose_kv'],
+   [{phase:'already_deployed',remote:'deployed',hasOwnerKey:false},'owner_recovery'],
+   [{phase:'ready',remote:'deployed',hasOwnerKey:true},'ready'],
+   [{phase:'failed',remote:'unchecked',error:'CLOUD_WRANGLER_RUNTIME_MISSING'},'runtime']
+ ];
+ for(const [input,expected] of cases){
+  const guide=cloudSetupGuidance(input);
+  assert.equal(guide.code,expected);
+  assert.equal(guide.totalSteps,6);
+  assert.ok(guide.step>=0&&guide.step<=6);
+  assert.ok(!JSON.stringify(guide).includes('OWNER_AUTH_KEY'));
+  if(guide.helpUrl)assert.match(guide.helpUrl,/^https:\/\/dash\.cloudflare\.com\//);
+ }
+});
+
+test('multiple accounts and KV namespaces are resolved from existing Worker identity and binding, without guessing',async()=>{
+ const {discoverCloudflare}=require('../app/cloudflare-discovery.cjs');
+ const a='a'.repeat(32),b='b'.repeat(32),kv1='c'.repeat(32),kv2='d'.repeat(32);
+ const tokenOutput=JSON.stringify({type:'oauth',token:'f'.repeat(40)});
+ const queried=[];
+ const fetcher=async(url)=>{
+   queried.push(url);
+   let result;
+   if(url.endsWith('accounts?per_page=100'))result=[{id:a,name:'Unrelated'},{id:b,name:'ChatToHarness'}];
+   else if(url.endsWith('/workers/scripts')&&url.includes('/'+a+'/'))result=[{id:'unrelated-worker'}];
+   else if(url.endsWith('/workers/scripts')&&url.includes('/'+b+'/'))
+     result=[{id:'chattoharness-auth'},{id:'chattoharness-cloud-router'}];
+   else if(url.endsWith('/workers/subdomain')&&url.includes('/'+b+'/'))result={subdomain:'watermoon3322'};
+   else if(url.includes('/storage/kv/namespaces')&&url.includes('/'+b+'/'))
+     result=[{id:kv1,title:'OAUTH_KV'},{id:kv2,title:'chattoharness-auth-OAUTH_KV'}];
+   else if(url.endsWith('/workers/scripts/chattoharness-auth/settings')&&url.includes('/'+b+'/'))
+     result={bindings:[{type:'kv_namespace',name:'OAUTH_KV',namespace_id:kv2}]};
+   else throw Error('UNEXPECTED_API_'+url);
+   return {status:200,json:async()=>({success:true,result})};
+ };
+ const found=await discoverCloudflare({fetcher,tokenOutput});
+ assert.equal(found.needs,null);
+ assert.equal(found.accountId,b);
+ assert.equal(found.kvId,kv2);
+ assert.ok(queried.some(x=>x.endsWith('/workers/scripts/chattoharness-auth/settings')));
+});
+test('ambiguous accounts and missing verified OAuth KV binding remain user decisions',async()=>{
+ const {discoverCloudflare}=require('../app/cloudflare-discovery.cjs');
+ const a='a'.repeat(32),b='b'.repeat(32),kv1='c'.repeat(32),kv2='d'.repeat(32);
+ const tokenOutput=JSON.stringify({type:'oauth',token:'f'.repeat(40)});
+ const fetcher=async(url)=>{
+   let result;
+   if(url.endsWith('accounts?per_page=100'))result=[{id:a,name:'One'},{id:b,name:'Two'}];
+   else if(url.endsWith('/workers/scripts'))result=[];
+   else if(url.endsWith('/workers/subdomain'))result={subdomain:'watermoon3322'};
+   else if(url.includes('/storage/kv/namespaces'))result=[{id:kv1,title:'OAUTH_KV'},{id:kv2,title:'chattoharness-auth-OAUTH_KV'}];
+   else if(url.endsWith('/workers/scripts/chattoharness-auth/settings'))result={bindings:[]};
+   else throw Error('UNEXPECTED_API');
+   return {status:200,json:async()=>({success:true,result})};
+ };
+ const first=await discoverCloudflare({fetcher,tokenOutput});
+ assert.equal(first.needs,'account');
+ const second=await discoverCloudflare({fetcher,tokenOutput,accountId:a});
+ assert.equal(second.needs,'kv');
+});
+test('Wrangler browser device login publishes only short code and clears it after authorization',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const runner=x.bootstrap.runner;
+ let denyOnce=true,seen='';
+ x.bootstrap.runner=async(node,script,args,opts)=>{
+   if(args[0]==='auth'&&denyOnce){denyOnce=false;return {code:1,stdout:'',stderr:''};}
+   if(args[0]==='login'){
+     assert.equal(args[1],'--device');
+     opts.onOutput?.('To authorize Wrangler, please visit:\nhttps://dash.cloudflare.com/oauth2/device\nand enter the code:\n jPqK6Qvs\n');
+     seen=x.bootstrap.status().loginCode;
+     return {code:0,stdout:'Successfully logged in'};
+   }
+   return runner(node,script,args,opts);
+ };
+ const result=await x.bootstrap.init({});
+ assert.equal(result.phase,'ready',result.error);
+ assert.equal(seen,'jPqK6Qvs');
+ assert.equal(result.loginCode,'');
+ assert.equal(JSON.stringify(result).includes('f'.repeat(64)),false);
+});
+
+test('reinitialize redeploys only existing Workers and preserves Owner Key and KV',async(t)=>{
+ const fixture=scenario();
+ t.after(()=>fs.rmSync(fixture.home,{recursive:true,force:true}));
+ assert.equal((await fixture.bootstrap.init({subdomain:'watermoon3322'})).phase,'ready');
+ const record=structuredClone(fixture.bootstrap.record);
+ const originalKey=fixture.bootstrap.ownerKey();
+ const originalFetcher=fixture.bootstrap.fetcher;
+ fixture.bootstrap.fetcher=async(url,opts)=>{
+  if(url.includes('/storage/kv/namespaces'))
+    return {status:200,json:async()=>({success:true,result:[{id:record.kvId,title:'OAUTH_KV'}]})};
+  return originalFetcher(url,opts);
+ };
+ fixture.calls.length=0;fixture.inputs.length=0;
+ const state=await fixture.bootstrap.reinitialize();
+ assert.equal(state.phase,'ready',state.error);
+ assert.deepEqual(fixture.calls.filter(a=>a[0]==='deploy').map(a=>a.slice(0,2)),
+   [['deploy','--keep-vars'],['deploy','--keep-vars']]);
+ assert.equal(fixture.calls.some(a=>a[0]==='kv'||a[0]==='secret'),false);
+ assert.equal(fixture.inputs.length,0);
+ assert.deepEqual(fixture.bootstrap.record,record);
+ assert.equal(fixture.bootstrap.ownerKey(),originalKey);
+});
+test('reinitialize without a trusted local managed service never deploys',async(t)=>{
+ const fixture=scenario();
+ t.after(()=>fs.rmSync(fixture.home,{recursive:true,force:true}));
+ const result=await fixture.bootstrap.reinitialize();
+ assert.equal(result.error,'CLOUD_REINITIALIZE_REQUIRES_MANAGED_SERVICE');
+ assert.equal(fixture.calls.some(a=>a[0]==='deploy'),false);
+});

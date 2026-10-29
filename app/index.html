@@ -55,25 +55,51 @@
         <section id="panel-connection" class="tab-panel" role="tabpanel" aria-labelledby="nav-connection" hidden>
           <section class="card connection-card" aria-labelledby="connection-title"><div class="card-header"><div><h2 id="connection-title">安全通道配置</h2><p>使用为这个工作空间创建的通道与运行密钥。</p></div><button class="text-button" type="button" data-external="platform">服务配置页面 <span aria-hidden="true">↗</span></button></div><div class="field-grid"><div class="field"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnelId" type="text" placeholder="tunnel_…" autocomplete="off" autocapitalize="off" spellcheck="false" required /><div class="field-hint">客户端接入时选择同一个 Tunnel。</div></div><div class="field"><div class="label-row"><label for="api-key">Runtime API Key</label><span id="key-status" class="key-status" hidden>已安全保存</span></div><div class="password-field"><input id="api-key" name="apiKey" type="password" placeholder="输入 Runtime API Key" autocomplete="off" autocapitalize="off" spellcheck="false" /><button id="toggle-key" class="password-toggle" type="button" aria-label="显示密钥" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z"/><circle cx="10" cy="10" r="2"/></svg></button></div><div class="field-hint">由系统加密保存，界面不会回显已保存的密钥。</div></div></div><div class="setting-row connection-options"><div><label class="checkbox-label" for="auto-connect"><input id="auto-connect" type="checkbox" checked /><span>打开应用时自动连接</span></label><p>关闭窗口后继续后台运行；不会随系统登录启动。</p></div><button id="open-proxy-settings" class="text-button proxy-settings-link" type="button" aria-controls="panel-proxy"><span>代理配置</span> <span aria-hidden="true">↗</span></button></div><div class="form-actions"><button id="save-connect" class="button primary" type="submit"><span id="save-connect-label">保存并连接</span><span aria-hidden="true">↗</span></button><span id="save-indicator" class="save-indicator">填写后保存</span></div></section>
           <section class="card connection-card" aria-labelledby="cloud-setup-heading">
-  <div class="card-header"><div><h2 id="cloud-setup-heading">多实例远端服务</h2><p>不需要终端、Node.js、Wrangler 或 Computer Use；首次授权 Cloudflare 后自动部署。</p></div></div>
-  <p class="field-hint" id="cloud-discovery-info">自动发现 Cloudflare 账户、Workers 子域名和已有 OAuth KV；可从列表选择，唯一匹配时自动选中。</p>
-  <div class="field-grid">
-    <div class="field" id="cloud-account-picker" hidden><label for="cloud-account-select">选择 Cloudflare 账户</label><select id="cloud-account-select"></select></div>
-    <div class="field" id="cloud-kv-picker" hidden><label for="cloud-kv-select">选择 OAuth KV</label><select id="cloud-kv-select"></select></div>
-  </div>
-  <div class="hero-actions"><button id="cloud-setup-refresh" class="button secondary" type="button">刷新云端配置</button><button id="cloud-setup-start" class="button secondary" type="button">初始化云端服务</button><button id="cloud-setup-copy-key" class="button secondary" type="button" hidden>复制我的授权密钥</button><span id="cloud-setup-status" role="status" aria-live="polite">尚未初始化</span></div>
-  <p class="field-hint">首次使用时 Cloudflare 可能打开浏览器请求账户授权；授权密钥只保存在系统加密存储，绝不提交到仓库。</p>
-</section>
-          <section class="card connection-card" aria-labelledby="cloud-pair-heading">
-            <div class="card-header"><div><h2 id="cloud-pair-heading">多设备连接 · 一次配对</h2><p>只需配对一次，重启后自动连接。原有 Tunnel 配置不受影响。</p></div></div>
-            <p class="field-hint">在 ChatGPT 的统一 ChatToHarness 插件中调用 create_pairing_code，复制返回的配对码到这里。</p>
+            <div class="card-header"><div><div class="cloud-heading-line"><h2 id="cloud-setup-heading">云端服务</h2><details class="cloud-info"><summary aria-label="云端服务说明" title="云端服务说明">i</summary><div class="cloud-info-content">自动发现 Cloudflare 服务，管理 Owner Key 和接入状态。</div></details></div></div><button class="text-button" type="button" data-navigate="help">使用说明 ↗</button></div>
+            <p id="cloud-discovery-info" class="field-hint">正在自动检查云端服务…</p>
             <div class="field-grid">
-              <div class="field"><label for="cloud-mcp-url">统一 MCP 地址</label><input id="cloud-mcp-url" type="url" placeholder="https://mcp.example.com/mcp" autocomplete="off" spellcheck="false" /></div>
-              <div class="field"><label for="cloud-pair-code">一次性配对码（5 分钟有效）</label><input id="cloud-pair-code" type="password" placeholder="从 ChatGPT 复制配对码" autocomplete="off" spellcheck="false" /></div>
+              <div class="field" id="cloud-account-picker" hidden><label for="cloud-account-select">选择 Cloudflare 账户</label><select id="cloud-account-select"></select></div>
+              <div class="field" id="cloud-kv-picker" hidden><label for="cloud-kv-select">选择 OAuth KV</label><select id="cloud-kv-select"></select></div>
+              <div class="field" id="cloud-subdomain-picker" hidden><label for="cloud-subdomain-input">新建 workers.dev 子域名</label><input id="cloud-subdomain-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="48" placeholder="例如 cth-1234abcd" /></div>
             </div>
-            <div class="hero-actions"><button id="cloud-pair-submit" class="button secondary" type="button">配对当前设备</button><span id="cloud-pair-status" role="status" aria-live="polite">尚未配对</span></div>
-            <div class="card-header"><div><h3>已配对设备</h3><p>展示已配对的电脑；离线设备也会保留。仅已配对设备可查看列表。</p></div><button id="cloud-devices-refresh" class="button secondary" type="button">刷新设备列表</button></div>
-            <p id="cloud-current-device" class="field-hint" aria-live="polite">当前设备：尚未识别</p>
+            <div class="hero-actions"><button id="cloud-setup-refresh" class="button secondary" type="button">刷新云端配置</button><button id="cloud-setup-start" class="button primary" type="button">自动初始化云端</button><button id="cloud-setup-copy-key" class="button secondary" type="button" disabled>复制 Owner Key</button><span id="cloud-setup-status" role="status" aria-live="polite">尚未初始化</span></div>
+            <div class="cloud-setup-guidance"><span id="cloud-setup-guidance" role="status" aria-live="polite">自动检测 Cloudflare 环境。需要授权或选择时，会显示具体步骤。</span><span id="cloud-login-code" hidden></span><button id="cloud-login-open" class="text-button" type="button" data-external="cloudflare-device-login" hidden>打开 Cloudflare 授权页 ↗</button><button id="cloud-setup-help-link" class="text-button" type="button" data-external="cloudflare-workers" hidden>打开 Cloudflare 控制台 ↗</button></div>
+            <div class="cloud-owner-bar" hidden><h3 id="cloud-owner-key-heading">Owner Key</h3><details class="cloud-info"><summary aria-label="Owner Key 说明" title="Owner Key 说明">i</summary><div class="cloud-info-content">此密钥用于 ChatGPT OAuth 所有者授权；可复制或在高级管理中临时显示。不同设备不共享设备密钥。</div></details><span id="cloud-owner-key-status" role="status" aria-live="polite">正在检查本机授权记录…</span></div>
+            <details class="cloud-advanced-details"><summary>高级管理</summary>
+              <div class="hero-actions"><button id="cloud-setup-reveal-key" class="button secondary" type="button" disabled aria-pressed="false">显示密钥</button><button id="cloud-setup-rotate-owner" class="button secondary" type="button" disabled>关联并轮换 Owner Key</button><button id="cloud-setup-reinitialize" class="button secondary" type="button" disabled>重新初始化云端</button><button id="cloud-setup-reset-trigger" class="button subtle-danger" type="button" disabled>彻底重置云端</button><details class="cloud-info"><summary aria-label="重新初始化说明" title="重新初始化说明">i</summary><div class="cloud-info-content">在原有 Cloudflare 账户重新部署两个 Worker，保留 Owner Key、OAuth KV、已配对设备及设备 ID。不会执行清空或重建操作。</div></details><button class="button secondary" type="button" data-external="cloudflare-workers">打开 Cloudflare 控制台</button></div>
+              <dialog id="cloud-reset-dialog" class="cloud-pair-dialog" aria-labelledby="cloud-reset-title">
+                <div class="cloud-dialog-header"><h3 id="cloud-reset-title">彻底重置云端</h3><button id="cloud-reset-close" class="cloud-dialog-close" aria-label="关闭">×</button></div>
+                <p>将永久删除 ChatToHarness 的授权 Worker、路由 Worker、OAuth KV 内容和设备绑定记录，并清除本机 Owner Key、配对凭据。其他设备需要重新绑定。此操作无法撤销。</p>
+                <p id="cloud-reset-target" class="field-hint"></p>
+                <div class="field"><label for="cloud-reset-confirm">输入 RESET CHATTOHARNESS 确认</label><input id="cloud-reset-confirm" autocomplete="off" spellcheck="false"></div>
+                <div class="hero-actions"><button id="cloud-reset-submit" class="button subtle-danger" type="button" disabled>确认永久重置</button><button id="cloud-reset-cancel" class="button secondary" type="button">取消</button></div>
+                <p id="cloud-reset-progress" role="status" aria-live="polite"></p>
+              </dialog>
+              <div id="cloud-owner-key-reveal" class="field" hidden><label for="cloud-owner-key-value">Owner Key（30 秒后自动隐藏）</label><input id="cloud-owner-key-value" type="text" readonly autocomplete="off" spellcheck="false" /></div>
+            </details>
+          </section>
+          <section class="card connection-card" aria-labelledby="cloud-pair-heading">
+            <div class="card-header"><div><div class="cloud-heading-line"><h2 id="cloud-pair-heading">多设备连接</h2><details class="cloud-info"><summary aria-label="多设备连接说明" title="多设备连接说明">i</summary><div class="cloud-info-content">通过浏览器批准当前设备，后续启动自动连接。</div></details></div></div><button class="text-button" type="button" data-navigate="help">配对说明 ↗</button></div>
+            <div class="cloud-pair-fields">
+              <div class="field"><label for="cloud-mcp-url">统一 MCP 地址</label><input id="cloud-mcp-url" type="url" placeholder="https://your-cloud-router.workers.dev/mcp" autocomplete="off" spellcheck="false" /></div>
+            </div>
+
+            <dialog id="cloud-pair-dialog" class="cloud-pair-dialog" aria-labelledby="cloud-pair-dialog-title">
+              <div class="cloud-dialog-header"><h3 id="cloud-pair-dialog-title">配对当前设备</h3><button id="cloud-pair-dialog-close" type="button" class="cloud-dialog-close" aria-label="关闭配对窗口">×</button></div>
+              <div class="cloud-pair-choice-actions">
+                <button id="cloud-auto-pair-submit" class="button primary" type="button">自动授权</button>
+                <button id="cloud-manual-mode-toggle" class="button secondary" type="button" aria-expanded="false" aria-controls="cloud-manual-pairing">输入一次性配对码</button>
+              </div>
+              <div id="cloud-manual-pairing" hidden>
+                <div class="cloud-pair-fields"><div class="field"><label for="cloud-pair-code">一次性配对码（5 分钟有效）</label><input id="cloud-pair-code" type="password" placeholder="从 ChatGPT 统一插件复制配对码" autocomplete="off" spellcheck="false" /></div></div>
+                <div class="hero-actions"><button id="cloud-pair-submit" class="button primary" type="button">确认配对</button></div>
+              </div>
+              <p id="cloud-pair-dialog-status" role="status" aria-live="polite" hidden></p>
+            </dialog>
+            <div class="cloud-current-device-row"><span id="cloud-current-device" aria-live="polite">当前设备：尚未识别</span><details id="cloud-current-device-detail" class="cloud-info"><summary aria-label="查看当前设备 ID" title="查看当前设备 ID">i</summary><div class="cloud-info-content"><span id="cloud-current-device-id">设备 ID：尚未识别</span></div></details><button id="cloud-device-disconnect" class="button secondary" type="button" hidden>断开</button><button id="cloud-device-reconnect" class="button secondary" type="button" hidden>连接</button><button id="cloud-pair-trigger" class="button primary" type="button" hidden>配对</button></div>
+            <span id="cloud-pair-status" class="cloud-visually-hidden" role="status" aria-live="polite"></span>
+            <div class="card-header cloud-device-roster-header"><div><div class="cloud-heading-line"><h3>已配对设备</h3><button id="cloud-devices-refresh" class="button secondary cloud-refresh-inline" type="button">刷新设备列表</button><details class="cloud-info"><summary aria-label="设备列表说明" title="设备列表说明">i</summary><div class="cloud-info-content">展示已配对的电脑；离线设备也会保留。仅已配对设备可查看列表。</div></details></div></div></div>
+
             <details id="cloud-device-picker" class="cloud-device-picker"><summary id="cloud-device-selected">选择设备</summary>
               <ul id="cloud-device-list" class="cloud-device-list" aria-label="已配对设备"><li>尚未配对设备</li></ul>
             </details>
@@ -115,7 +141,22 @@
         </section>
 
         <section id="panel-help" class="tab-panel" role="tabpanel" aria-labelledby="nav-help" hidden>
-          <section class="card help-card"><div class="card-header"><div><h2>使用文档</h2><p>按步骤了解连接、文件、工具和问题处理。</p></div><button class="button secondary compact-button" type="button" data-external="docs">打开帮助中心</button></div></section>
+          <details class="card cloud-help-details"><summary>云端服务、Owner Key 与设备配对说明</summary>
+<p>首次管理云端服务时，Cloudflare 会要求账户授权。Owner Key 是云端所有者的长期授权密钥，不是每台设备的配对码；可在连接配置中复制。</p>
+<p>新设备：填写或自动发现统一 MCP 地址 → 点击「授权并绑定当前设备」→ 浏览器核对设备名称与 ID、输入 Owner Key 并批准 → 返回客户端等待自动连接。各设备独立生成设备凭据，云端只保存摘要。</p>
+<p>已绑定设备重启后自动连接；不能仅凭 MCP 地址或设备名称加入。Owner Key 丢失时，可在高级管理中通过 Cloudflare 管理授权进行安全轮换，不重建既有设备。</p>
+<p>兼容模式：已授权的 ChatGPT 统一插件也可以调用 create_pairing_code，生成短期配对码，再在客户端「手动输入一次性配对码」中使用。</p>
+<h3>云端自动初始化：必要时如何手动处理</h3>
+<ol>
+<li><strong>首次 Cloudflare 登录</strong>：在连接配置中点击「自动初始化云端」。程序会启动 Wrangler 设备授权并打开浏览器。核对登录账户、确认授权；如果没有自动打开，在界面点击「打开 Cloudflare 授权页」，输入界面显示的短期验证码。验证码 5 分钟左右失效，过期请重新开始。</li>
+<li><strong>多个 Cloudflare 账户</strong>：只有能从已有两个 ChatToHarness Worker 确认唯一归属时才自动选中，否则必须手动选择你要管理的账户。需具有 Workers Scripts 和 KV 的读写权限。</li>
+<li><strong>没有 workers.dev 子域名</strong>：App 会建议一个名称，确认后自动创建。若权限不足或名称不可用，在 Cloudflare Dashboard → Workers &amp; Pages → Your subdomain 中配置，再点击「刷新云端配置」。不会改变其他已有 Worker 的子域名。</li>
+<li><strong>OAuth KV</strong>：如果没有匹配的 KV，App 会创建。如果存在多个，优先识别授权 Worker 实际绑定的 OAUTH_KV；不能唯一识别时需选择现有 KV，避免丢失登录或设备数据。</li>
+<li><strong>Worker 部署与验证</strong>：App 自动部署授权 Worker、设置 Owner Key Secret、部署路由 Worker，并验证 OAuth 元数据、健康检查以及未授权 MCP 拒绝。失败时根据界面提示检查权限、网络/代理及 Cloudflare Worker 日志，处理后重试。</li>
+<li><strong>已有云端但本机缺少 Owner Key</strong>：不会自动重新部署或覆盖。先在原始初始化设备查找密钥；无法找回才在「高级管理」中显式轮换，已有 OAuth Token 需单独撤销。</li>
+</ol>
+</details>
+<section class="card help-card"><div class="card-header"><div><h2>使用文档</h2><p>按步骤了解连接、文件、工具和问题处理。</p></div><button class="button secondary compact-button" type="button" data-external="docs">打开帮助中心</button></div></section>
           <section id="update-card" class="card update-card" aria-labelledby="update-title">
             <div class="card-header"><div><h2 id="update-title">应用更新</h2><p id="update-version">正在读取版本…</p></div><button id="check-update" class="button secondary compact-button" type="button">检查更新</button></div>
             <p id="update-status" class="update-status" role="status" aria-live="polite"></p>

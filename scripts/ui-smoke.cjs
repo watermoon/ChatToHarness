@@ -121,6 +121,81 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
 `);
   let page = await launch();
   const initial = await getState();
+  await tab(page,'connection');
+  await page.locator('#cloud-setup-copy-key').waitFor({state:'visible'});
+  assert.equal(await page.locator('#cloud-setup-copy-key').count(),1);
+  assert.equal(await page.locator('#cloud-setup-reveal-key').count(),1);
+  assert.equal(await page.locator('#cloud-setup-rotate-owner').count(),1);
+  assert.equal(await page.locator('#cloud-setup-copy-key').isDisabled(),true);
+  assert.equal(await page.locator('#cloud-setup-reveal-key').isDisabled(),true);
+  assert.equal(await page.locator('[data-external="cloudflare-workers"]').count(),2,
+    'Cloudflare control panel has the standard advanced action and contextual help action');
+  assert.equal((await page.locator('#cloud-owner-key-status').textContent()).trim(),'未保存');
+  assert.equal(await page.locator('#cloud-auto-pair-submit').count(),1);
+  assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),false);
+  assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
+  assert.equal(await page.locator('#cloud-setup-heading').count(),1);
+  assert.equal(await page.locator('#cloud-owner-key-heading').count(),1);
+  assert.equal(await page.locator('#cloud-subdomain-picker').count(),1);
+  assert.equal(await page.locator('#cloud-login-open').count(),1);
+  assert.equal(await page.locator('#cloud-setup-guidance').count(),1);
+  assert.ok((await page.locator('#cloud-setup-guidance').innerText()).length>10,
+    'cloud status must have actionable guidance');
+  const panelWidths=await page.locator('#cloud-mcp-url').evaluate(el=>({url:el.getBoundingClientRect().width,container:el.closest('.cloud-pair-fields').getBoundingClientRect().width}));
+  assert.ok(panelWidths.url>=Math.min(300,panelWidths.container-2),
+    'MCP address uses full width, not a half-column: '+JSON.stringify(panelWidths));
+  assert.equal(await page.locator('#cloud-pair-trigger').isVisible(),true);
+  const statusClip=await page.locator('#cloud-pair-status').evaluate(el=>{
+    const styles=getComputedStyle(el);
+    const rect=el.getBoundingClientRect();
+    return {clip:styles.clip,position:styles.position,width:rect.width,height:rect.height};
+  });
+  assert.ok(statusClip.position==='absolute'&&statusClip.width<=1.5&&statusClip.height<=1.5,
+    'status is only visually hidden while remaining accessible: '+JSON.stringify(statusClip));
+  const layoutOrder=await page.evaluate(()=>{
+    const current=document.querySelector('.cloud-current-device-row').getBoundingClientRect();
+    const heading=document.querySelector('#cloud-devices-refresh').getBoundingClientRect();
+    const picker=document.querySelector('#cloud-device-picker').getBoundingClientRect();
+    return {current:current.top,heading:heading.top,picker:picker.top};
+  });
+  assert.ok(layoutOrder.current<layoutOrder.heading&&layoutOrder.heading<layoutOrder.picker,
+    'current device row should be above roster header and dropdown: '+JSON.stringify(layoutOrder));
+  assert.equal(await page.locator('.cloud-device-online').count(),0,'unpaired roster has no online badges');
+  assert.equal(await page.locator('#cloud-device-disconnect').isHidden(),true);
+  assert.equal(await page.locator('#cloud-device-reconnect').isHidden(),true);
+  assert.equal(await page.locator('#cloud-setup-reinitialize').isDisabled(),true);
+  assert.equal(await page.locator('#cloud-setup-reset-trigger').isDisabled(),true);
+  assert.equal(await page.locator('#cloud-owner-key-status').isVisible(),false);
+  assert.equal(await page.locator('#cloud-setup-copy-key').count(),1);
+  const rosterPositions=await page.evaluate(()=>{
+    const title=[...document.querySelectorAll('h3')].find(h=>h.textContent==='已配对设备');
+    const refresh=document.querySelector('#cloud-devices-refresh');
+    return {title:title.getBoundingClientRect().top,refresh:refresh.getBoundingClientRect().top};
+  });
+  assert.ok(Math.abs(rosterPositions.title-rosterPositions.refresh)<35,
+    'refresh must align with roster title: '+JSON.stringify(rosterPositions));
+  const currentDeviceSize=await page.locator('#cloud-current-device').evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
+  assert.ok(currentDeviceSize>=15,'Current device label should not use helper-text font size: '+currentDeviceSize);
+  assert.equal(await page.locator('#cloud-current-device-detail').evaluate(el=>el.open),false);
+  await page.locator('#cloud-current-device-detail > summary').click();
+  assert.equal(await page.locator('#cloud-current-device-detail').evaluate(el=>el.open),true);
+  await page.locator('#cloud-current-device-detail > summary').click();
+  await page.locator('#cloud-pair-trigger').click();
+  assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),true);
+  assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
+  await page.locator('#cloud-manual-mode-toggle').click();
+  assert.equal(await page.locator('#cloud-manual-mode-toggle').getAttribute('aria-expanded'),'true');
+  assert.equal(await page.locator('#cloud-manual-pairing').isVisible(),true);
+  const codeWidths=await page.locator('#cloud-pair-code').evaluate(el=>({
+    code:el.getBoundingClientRect().width,
+    container:el.closest('.cloud-pair-fields').getBoundingClientRect().width
+  }));
+  assert.ok(codeWidths.code>=Math.min(270,codeWidths.container-2),
+    'Manual code input must fill its modal: '+JSON.stringify(codeWidths));
+  await page.locator('#cloud-pair-dialog-close').click();
+  assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),false);
+  assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
+  await tab(page,'overview');
   // Exercise the exact paths computed by the packaged main process, without
   // invoking login, deploying Workers, or reading any saved cloud credentials.
   const cloudRuntime = await page.evaluate(() => window.localHarness.cloudBootstrapRuntimeCheck());
@@ -209,25 +284,36 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   assert.equal(await page.locator('#panel-overview').isVisible(), true);
   assert.equal(/ChatGPT|OpenAI|Mac|macOS|Windows/.test(await page.locator('#panel-overview').textContent()), false);
 
-  // Current-device pairing validates locally: no malformed URL or short
-  // pairing code must reach the network or surface Node's TypeError.
+  // The dialog only appears for unpaired devices. Invalid inputs never reach
+  // the network, and closing the dialog clears any sensitive code.
   await tab(page,'connection');
   const pairInput=page.locator('#cloud-mcp-url');
   const pairCode=page.locator('#cloud-pair-code');
   const pairButton=page.locator('#cloud-pair-submit');
   const pairStatus=page.locator('#cloud-pair-status');
+  const pairDialogStatus=page.locator('#cloud-pair-dialog-status');
+  const openManual=async()=>{
+    await page.locator('#cloud-pair-trigger').click();
+    await page.locator('#cloud-manual-mode-toggle').click();
+  };
   await pairInput.fill('');
+  await openManual();
   await pairButton.click();
   assert.match(await pairStatus.textContent(),/MCP/);
+  assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),false);
   await pairInput.fill('not-a-url');
+  await openManual();
   await pairButton.click();
   assert.match(await pairStatus.textContent(),/MCP/);
   assert.doesNotMatch(await pairStatus.textContent(),/TypeError|Invalid URL/);
-  await pairInput.fill('https://router.example/mcp');
+  await pairInput.fill('https://example.com/mcp');
+  await openManual();
   await pairCode.fill('invalid');
   await pairButton.click();
-  assert.match(await pairStatus.textContent(),/43/);
-  await pairInput.fill('');await pairCode.fill('');
+  assert.match(await pairDialogStatus.textContent(),/43/);
+  await page.locator('#cloud-pair-dialog-close').click();
+  assert.equal(await pairCode.inputValue(),'');
+  await pairInput.fill('');
 
   // Manage a real MCP peer through the packaged app before configuring either
   // a workspace or a tunnel. The smoke runner's standalone Node executable is

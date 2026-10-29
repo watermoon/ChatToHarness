@@ -1,5 +1,5 @@
 // Experimental multi-device router. Read cloud-router/README.md before deployment.
-import {newPairing,redeemPairing,verifyDevice} from './pairing.mjs';
+import {newPairing,redeemPairing,verifyDevice,requestDevicePairing,pairingRequestDetails,approveDevicePairing,devicePairingStatus} from './pairing.mjs';
 // No local desktop commands are executed inside this Worker.
 const MAX_BODY = 128 * 1024;
 const MAX_FRAME = 512 * 1024;
@@ -42,6 +42,30 @@ export class DeviceHub {
   }
   async fetch(req) {
     const pathname = new URL(req.url).pathname;
+    if(pathname==='/internal-reset-device-hub' && req.method==='POST'){
+      for(const ws of this.ctx.getWebSockets()){
+        try{ws.close(1001,'Service reset');}catch{}
+      }
+      await this.ctx.storage.deleteAlarm?.();
+      await this.ctx.storage.deleteAll();
+      return json({cleared:true},200);
+    }
+    if(['/pair-request','/pair-status','/pair-request-details','/pair-request-approve'].includes(pathname)){
+      if(req.method!==(pathname==='/pair-request-details'?'GET':'POST'))
+        return new Response('Method not allowed',{status:405});
+      let input={};
+      if(req.method==='POST'){
+        if(Number(req.headers.get('content-length'))>4096)return json(error('PAIR_INVALID','Oversized request'),413);
+        const raw=await req.text();
+        if(raw.length>4096)return json(error('PAIR_INVALID','Oversized request'),413);
+        try{input=JSON.parse(raw);}catch{return json(error('PAIR_INVALID','Malformed JSON'),400);}
+      }
+      const value=pathname==='/pair-request'?await requestDevicePairing(this.ctx,input):
+        pathname==='/pair-status'?await devicePairingStatus(this.ctx,input?.request_id,input?.poll_secret):
+        pathname==='/pair-request-approve'?await approveDevicePairing(this.ctx,input?.request_id):
+        await pairingRequestDetails(this.ctx,new URL(req.url).searchParams.get('request'));
+      return json(value,value.error?(/LIMIT/.test(value.error)?429:403):200);
+    }
     if (pathname === '/pair-create') {
       if (req.method !== 'POST') return new Response('Method not allowed',{status:405});
       return json(await newPairing(this.ctx));
@@ -80,7 +104,8 @@ export class DeviceHub {
         if (!item || !ID.test(key.slice(7)) ||
           typeof item.name!=='string' || typeof item.platform!=='string') continue;
         devices.push({device_id:key.slice(7),name:item.name,platform:item.platform,
-          online:online.has(key.slice(7)),paired_at:item.paired_at||null});
+          online:online.has(key.slice(7)),harness_version:item.harness_version||'',
+          os_version:item.os_version||'',paired_at:item.paired_at||null});
       }
       return json(devices.sort((a,b)=>a.device_id.localeCompare(b.device_id)));
     }
@@ -125,6 +150,23 @@ export class DeviceHub {
       if (old && old !== ws) {
         this.failPending(old, 'DEVICE_DISCONNECTED');
         old.close(1000, 'Replaced by newer connection');
+      }
+      if(item.harness_version!==undefined&&
+         (typeof item.harness_version!=='string'||!/^[0-9A-Za-z.+-]{1,32}$/.test(item.harness_version))){
+        ws.close(1008,'Invalid version');return;
+      }
+      if(item.os_version!==undefined&&
+         (typeof item.os_version!=='string'||item.os_version.length>100||
+           /[\x00-\x1f]/.test(item.os_version))){
+        ws.close(1008,'Invalid OS version');return;
+      }
+      if(item.harness_version||item.os_version){
+        const original=await this.ctx.storage.get('device:'+item.device_id);
+        if(original)await this.ctx.storage.put('device:'+item.device_id,{
+          ...original,
+          ...(item.harness_version?{harness_version:item.harness_version}:{}),
+          ...(item.os_version?{os_version:item.os_version}:{})
+        });
       }
       ws.serializeAttachment({authenticated: true, device_id: item.device_id,
         name: item.name, platform: item.platform});

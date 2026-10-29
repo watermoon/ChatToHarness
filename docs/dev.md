@@ -1,3 +1,122 @@
+## 2026-10-29 设备列表 Harness 与 OS 产品版本上报
+
+- 原因：本地 Agent 已发 harness_version，但云端新 Worker 未部署、设备未重新注册，云端设备记录缺版本；旧 UI 对本机也未使用本地 package.json 兜底，故显示 Harness —。
+- 本机新增 local_harness_version 和 local_os_version 本地兜底，Mac 通过 sw_vers -productVersion 采集真实 macOS 产品版本（Mac 实测 macOS 14.6.1，不能把 Darwin 23.6.0 当成 macOS 产品版本）；Windows 以系统 build 判断 10/11/Server 并显示 Build；Linux 取 os-release PRETTY_NAME（失败才明确标注内核）。
+- 新 Agent 注册协议增加 os_version；Router Worker 验证字段后持久化设备 os_version 并在 paired-devices 返回；旧设备缺字段兼容。UI 其他设备仅显示真实注册上报，未知保持 —；本机缺失服务端字段才本地兜底。本机徽标 13px、800 粗体与深色。
+- 本地测试：专项 66/66 通过；npm test 675 项（659 PASS、16 SKIP、0 FAIL），两个 Worker dry-run 通过；Mac ARM64 实机构建 App 位于 dist/dev-device-version-20261029/mac-arm64/ChatToHarness.app，codesign deep strict 和 macOS 14.0 最低版本 PASS，打包 GUI smoke PASS，realLocalTools=46，三语言 zh-CN/en/ja。
+- 当前尚未向 Cloudflare 部署新 Worker；其他设备需新版客户端重连后方能补足云端版本。未清理 Owner Key、KV、设备数据，未覆盖 App，未提交或推送源码。
+
+## 2026-10-29 彻底重置云端与设备列表信息完善
+
+- 追加安全回归：resetProof HMAC 绑定已验证 Owner Key、原 Cloudflare 账户、KV 与子域名；伪造 resetStage/resetProof 不能跳过核验删除其他账户。对 DeviceHub 内部清理的 WebSocket 关闭、deleteAlarm/deleteAll 增加测试；本地配对凭据移除后必须保留其他 Tunnel 配置文件。专项重置 7/7 PASS，本地配对 9/9 PASS；之前完整 npm test 667 项（651 PASS、16 SKIP、0 FAIL），新增两项测试单独通过。
+- 最终本地 Mac 构建：CTH_DIST_SUBDIR=dev-full-cloud-reset-final-20261029 npm run build EXIT 0；产物 dist/dev-full-cloud-reset-final-20261029/mac-arm64/ChatToHarness.app；codesign --verify --deep --strict PASS、macOS 最低 14.0 校验通过。打包 GUI smoke 返回 packaged=true、realLocalTools=46、语言 zh-CN/en/ja，EXIT 0。首次构建的 GUI 烟测曾因旧测试等待已隐藏 Owner Key 标题而失败，更新验收断言到初始化旁的复制按钮后同一界面通过；最终包重新构建并通过。
+- 真实 Cloudflare 上线、真实全量删除均未执行。实际执行彻底重置会让现有 ChatGPT OAuth 和设备配对失效，仍需人工确认。Workers.dev 子域名、Cloudflare 账户本身和服务端无法遍历的其他设备本地旧密文不删除；Owner Key 等本机凭据仅在所有远端步骤成功后才删除。
+
+
+- 在「云端服务 → 高级管理」新增「彻底重置云端」危险按钮与原生确认弹窗。需完整输入 RESET CHATTOHARNESS 才能执行。已存在完整、已验证本机 Owner Key 且云端部署可核对时才允许初次执行；半途失败的已签名重置流水账允许同目标恢复。
+- 远端安全阶段：Cloudflare OAuth 管理账户权限校验、资源精确核查、OAuth KV 标题与 ID 双重校验，检查所有 Worker 的 KV 引用，不允许删除共享或来源不明的 KV；随后将含 Owner 验证的设备数据清理端点部署至已验证的 Router Worker，私有 AUTH_SERVER 绑定验证 Owner Key，删除唯一 default DeviceHub Durable Object 的全部存储；再删除专属 Router 和 Auth Worker，并确认 Cloudflare API 返回不存在；最后删除专属 OAuth KV 并验证不存在。
+- 所有远端步骤成功才清理本机 app/cloudflare-bootstrap/credentials.json、生成的 auth/router JSONC，以及 cloud-router-pairing.json。保留本地 Tunnel/系统代理、普通用户配置与其他目录。其他电脑上的本地过期文件不跨设备删除，但远端设备凭据已无效，需要重新绑定。
+- 失败不会提前清除本机 Owner Key；每一步的 resetStage 和由原 Owner Key HMAC 绑定账号/KV/子域名的 resetProof 可用于安全重试、拒绝手工篡改跨账户删除。仅本地收尾失败可不依赖重新登录 Cloudflare 完成。不可将「重新初始化云端」（保留数据）与「彻底重置云端」（删除）混淆。命名的 Durable Object 实例数据通过 deleteAll 清空，但 Cloudflare 内部 namespace 元数据不承诺自动消失。
+- 用户另要求：刷新设备列表按钮紧随「已配对设备」标题；设备列表恢复平台、Harness 版本、在线/离线及仅本机显示的「本机」标记，当前设备名称加粗；旧设备还未上报版本时使用 —。为支持版本登记，桌面 Agent 注册上报 package version，DO 保存最后上报版本，设备清单返回值供 UI 显示；新 Worker 部署与新版设备重新连接后数据才齐全。
+- Owner Key 复制按钮移到云端初始化按钮旁边，常驻的 Owner Key 单行说明隐藏，详情通过现有高级管理入口；状态依旧可由内部状态事件通知。没有重置真实线上资源、未更新实际部署的 Router/Auth Worker，保留全部未提交修改。
+- 2026-10-29 Mac 本机：npm test 667 项（651 PASS，16 SKIP，0 FAIL）；Router/Auth 两个 wrangler dry-run 均 PASS；破坏性重置只用模拟后端验证正常删除、共享 KV 拒绝、远端部分失败可重试、局部清理失败恢复、伪造流水账拒绝。用户的云端及已配对设备未被修改。本机 .app 最终产物及 GUI 结果以同轮后续记录为准。
+
+## 2026-10-29 设备区单行操作与设备列表视觉层级
+
+- Mac 本地包 dist/dev-device-row-20261029/mac-arm64/ChatToHarness.app 成功构建、codesign deep strict 通过。完整 packaged GUI smoke 的首次尝试因 Playwright 把裁剪为 1x1 像素的无障碍播报区域判定为 visible 而失败；修正测试为实际矩形/position 检查后使用同一个安装包重跑 smoke PASS，packaged=true，macOS arm64，46 个真实本地工具，zh-CN/en/ja。没有变更已打包应用源码。
+- UI 单测检查：未配对/连接中/在线/离线只出现一个状态动作；已配对清单中所有条目保留完整 ID，当前设备 name 强调，在线专用醒目状态，离线弱化；折叠项仍保持用户选择的设备名。真实 GUI smoke 检查当前设备行 → 已配对设备标题/刷新 → 下拉的实际纵向顺序，顶部「已连接」无可见冗余文字。
+
+
+- 当前设备行统一为 当前设备：真实设备名 [i] [单一状态按钮]；当前在线显示「断开」，已配对不在线显示「连接」，未配对显示「配对」，继续使用既有配对弹窗；连接中禁用重复连接按钮。
+- 其下是「已配对设备」与刷新按钮，以及可展开的全量已配对设备下拉清单（包括离线）。在线项用绿色高亮「在线」，离线状态弱化，当前设备名称加粗并使用浅背景标明；展开项目继续保留完整设备 ID，避免同名混淆。
+- 原孤立的「已连接」文字不再常驻，仅保留隐藏的 aria-live 状态用作无障碍播报及错误反馈。设备名取自真实设备信息，不硬编码。
+- 本地专项 44/44 通过，完整 npm test 658 项（642 通过，16 跳过，0 失败），git diff --check 通过；Mac 本地打包 GUI smoke 验收补充顺序和隐藏状态断言。
+- 未动云端 Worker、Owner Key、设备凭据或持久断开语义；未操作运行中的 Mac 连接，不覆盖旧 App，不提交代码。最终打包结果随后记录。
+
+## 2026-10-29 已配对设备断开与云端安全重新初始化
+- 最终版 Mac arm64 路径：dist/dev-device-disconnect-final-20261029/mac-arm64/ChatToHarness.app。Mac 本地 npm run build 成功、codesign deep strict 和 macOS 14.0 最低版本校验成功、打包 GUI smoke 通过（packaged=true、realLocalTools=46、zh-CN/en/ja）。
+- GUI smoke 测试覆盖未配对下断开/重连均隐藏、未拥有管理密钥时重新初始化禁用、当前设备字体 >=15px。额外补齐 redeploying_auth/redeploying_router 进度与多语言，专项测试 23/23 通过。
+- 不在用户当前工作的 Mac 上实际断开连接，不执行真实远端重新部署；这两项行为属于新包上线后的手动功能验证。本轮本地源码保留修改且未提交推送。
+
+
+- 已配对设备在「连接配置 → 多设备连接 → 当前设备」提供「断开连接」，断开当前设备的统一 MCP WebSocket/Agent；保留设备 ID 和本机 safeStorage 加密的设备凭据，云端设备列表仍保留离线设备。使用同位置的「重新连接」直接利用已保存凭据连接，无需再次配对。
+- 本机持久化暂停标志 paused=true，断开后即使重启桌面 App 也不会自动重连；重新连接将 paused=false 持久化。兼容旧 schema 1 凭据，无 paused 字段默认为允许自动连接；存储更新采取原子替换、不回写明文 Token。
+- 「当前设备」信息由原 11px 的辅助文字提升为 15px、600 字重；设备详情 i 保持按需显示完整 ID，不在主界面常驻长串字符。
+- 已部署并且本机保存有效管理 Owner Key 的云端，在「云端服务 → 高级管理」显示「重新初始化云端」按钮。用户二次确认后仅向原账号/原 KV/原 workers.dev 子域名执行两个 Worker 的 keep-vars 重部署，保留原 Owner Key Secret、OAuth KV、设备 DO 记录和设备 ID；不执行密钥轮换、KV 创建/清空或设备解除绑定。强制校验本机原始管理记录及现有线上两个 Worker，校验失败时不触发部署。已有云端但本机没有管理密钥时该按钮禁用，此时应先关联/找回管理凭据。
+- 「刷新云端配置」只重新检测，不触发部署。「彻底清空已有云端」需要另行设计带备份与强确认的危险操作，绝不能由普通重新初始化暗中执行。
+- 本地专项测试覆盖断开、关闭 Agent、进程重启后保持断开、手动恢复，凭据密文不变；云端重新初始化的 keep-vars 双 Worker 重部署及 KV/Secret 不修改。全量 npm test 656 项（640 PASS、16 SKIP、0 FAIL），git diff --check PASS。
+- 本轮没有实际断开当前工作的 Mac 连接，也没有执行远端重新初始化；只验证业务实现、模拟 Worker 部署和安全边界。新的 Mac 安装包及 GUI 烟测结果见本轮后续记录；保留所有用户未提交修改。
+
+## 2026-10-29 配对弹窗与连接页信息收敛
+
+- 用户要求精简自动配对 UI：不再常驻手动输入一次性配对码，仅尚未配对时显示配对设备入口。点击后打开原生 dialog；默认提供自动授权和手工模式；仅点击手工模式时显示 43 位一次性配对码。已配对时隐藏入口，正在等待批准时也避免重复申请；关闭清空敏感输入，原生 Esc 退出。
+- 云端服务、多设备连接、设备列表三处冗长说明改为紧邻标题的可点击 i 图标；Owner Key 常驻状态缩短为已保存/未保存，完整说明在 i；当前设备常驻仅显示设备名，完整 ID 放在 i 详情里。信息使用 details/summary 支持键盘操作。设备下拉仍保留精确设备 ID。
+- 自动配对协议、云端 Worker、OWNER_AUTH_KEY、设备 Token、KV 均未改动；保留其他未提交修改和原手工配对服务接口。
+- 本地 UI/i18n 单测 39/39 PASS；全量 npm test 共 649 项（633 PASS、16 SKIP、0 FAIL）；git diff --check PASS。
+- macOS 14 arm64 本机构建 CTH_DIST_SUBDIR=dev-compact-modal-20261029 npm run build 成功，独立 App 在 dist/dev-compact-modal-20261029/mac-arm64/ChatToHarness.app，codesign deep strict PASS。打包 GUI smoke 第一次因为原脚本直接点击已隐藏手工按钮而失败；调整测试步骤为真实弹窗交互（默认隐藏、点击展开、输入校验、关闭清空），同一包重新运行 npm run smoke:ui PASS，返回 packaged=true，realLocalTools=46，语言 zh-CN/en/ja。
+- 未覆盖原安装版、未上传 CI、未提交或推送；尚待用户视觉复验，不能把 GUI 自动烟测等同于视觉验收。
+
+## 2026-10-29 云端环境自动初始化与可操作引导
+
+- 最终本机验收：自动配置专项 35/35 PASS；完整测试 648 项（632 PASS、16 SKIP、0 FAIL）；两个 Worker Wrangler dry-run PASS；Mac arm64 本地目录 dist/dev-cloud-setup-20261029/mac-arm64/ChatToHarness.app 构建完成、codesign deep strict PASS、打包版 Electron smoke:ui PASS。UI 烟测新增引导控件检查；首次 smoke 因新增了第二个同属 Cloudflare 的上下文帮助按钮造成旧测试计数不符，修正断言后复验 PASS，非应用功能故障。Windows 脚本尚未在 Windows 真机执行。源代码未提交/推送；没有更改生产 Workers/KV/Owner Key/配对数据。
+
+- 目标：减少 Cloudflare 初始化时选择账户、KV、子域名、Owner Key 的手工步骤。App 启动后仅做只读检测；点击「自动初始化云端」才会执行登录、创建或部署，已有服务不会被自动覆盖。
+- 多账户：仅在能查到一套账户同时包含 chattoharness-auth 和 chattoharness-cloud-router 两个 Worker 时自动选择；否则要求用户选择。多 OAuth KV：根据已有授权 Worker 的 OAUTH_KV 绑定 ID 唯一识别；不能确认则要求选择，不猜测。
+- 首次 Cloudflare 登录：Wrangler login --device --use-keyring。应用尝试直接唤起浏览器；浏览器无法自动打开时，通过界面提供固定安全授权页和短时验证码，完成后清空；不会将原始 token 或 CLI 日志发送到渲染器。
+- 没有 workers.dev 子域名时显示建议名称，用户可编辑确认，之后通过 Cloudflare API PUT /accounts/{account_id}/workers/subdomain 创建并校验，不修改已经存在的子域名。API 不可达时不会猜测资源不存在。
+- KV 不存在时自动创建；其余保留既有安全顺序：先加密保存 Owner Key，之后配置 Worker 和 Secret、验证 OAuth、health 与匿名 MCP 401。若已部署但本机密钥丢失、权限缺失或网络状态不明，安全阻止自动覆盖，改为给出明确恢复指引。
+- UI：仅在选择账户/KV 或新建子域名时出现对应表单；常驻精简状态和 1–6 步进度，完整 Cloudflare 登录/权限/Workers/KV/密钥恢复说明收在帮助页。
+- Windows/macOS 测试脚本：scripts/accept_cloud_setup.ps1 和 scripts/accept_cloud_setup.sh；含专项、全量和 Wrangler dry-run，设置 CTH_EXECUTABLE 可追加打包 GUI 验收，不部署生产服务。
+- 新测试覆盖只读初始化、避免重命名子域名、自动识别真实 Worker/KV 归属、账号歧义必须人工选择、短期验证码安全生命周期，以及动态 UI。生产账户已存在正常服务，本轮不得为测试再次创建生产 KV/子域名或轮换 Owner Key。
+
+## 2026-10-29 自动配对与云端设置 UI 收敛
+
+- 最终 Mac 本地重新打包（包含「当前设备已绑定」按钮状态）：CTH_DIST_SUBDIR=dev-auto-pair-final-20261029 npm run build EXIT 0，产物 dist/dev-auto-pair-final-20261029/mac-arm64/ChatToHarness.app；代码签名校验和完整打包 GUI smoke EXIT 0。构建成功的后续重试取代了前一次异常退出的结果。
+- 一键验收脚本新增 scripts/accept_cloud_pairing.sh 和 scripts/accept_cloud_pairing.ps1；macOS bash 本机执行通过（641 tests，625 PASS / 16 SKIP / 0 FAIL），Windows PowerShell 脚本尚需 Windows 主机实际执行。设置 CTH_EXECUTABLE 可追加打包 GUI 测试。
+
+
+- 在当前 feat/cloudflare-multi-device-router 分支新增桌面发起自动配对：本地 32 字节安全随机数作为设备 Token，仅发送 SHA-256 摘要；云端申请、owner 审核、轮询及持久设备注册；默认不要求 ChatGPT 对话创建/复制一次性码。
+- Cloudflare 授权 Worker 仅通过已存在的 AUTH_SERVER 服务绑定向 Router Worker 提供私有 Owner Key 验证 RPC；浏览器审批页有同源随机 Cookie + 表单 CSRF、设备信息核对、一次性处理、5 分钟失效；管理云端的本机还可用 OS 加密的 Owner Key + 设备自己的轮询密钥自动批准。不得向不匹配的 MCP URL 发送 Owner Key。
+- 旧的 create_pairing_code、pair-redeem、手工配对和已保存设备密钥保持兼容；设备不能重名覆盖，允许工具仍为 get_harness_status 只读；不改变既有 Tunnel、OAuth KV、Durable Object 数据或 Owner Key。
+- UI：将 Owner Key 管理合入云端服务卡片，说明移入「说明/帮助」面板，敏感显示/轮换收在高级管理；多设备配对默认仅显示整行 MCP 地址和自动绑定按钮，手工配对码折叠为兼容方式；两类输入框同宽。
+- 本地验收：自动配对安全专项含未授权拒绝、Owner Key 验证、CSRF、一次性设备、设备端密钥不外泄与管理设备无浏览器路径；npm test 641 项（625 通过、16 跳过、0 失败），Wrangler 双 Worker dry-run 成功。
+- Mac arm64 本机打包 App 路径 dist/dev-auto-pair-20261029/mac-arm64/ChatToHarness.app。构建命令本轮第一次返回码 1，electron-builder 控制台输出截断但包体落盘；随后独立检查 App 主程序、app.asar、云端资源、macOS 14.0 最低系统、codesign deep strict 均通过；使用这一包执行完整 npm run smoke:ui 成功，单独验证两个输入框实测等宽、Owner Key 合并卡片、手工配对码默认折叠；没有覆盖现有 App。构建命令返回码 1 的异常仍应单独定位，不能将第一次构建命令记作成功。
+- 真实云端部署：auth Worker version 8ae01c7d-8e43-4e85-a2ca-95dce7a42e5b，OWNER_AUTH_KEY 更新前后均存在，未轮换；router Worker 单独发布成功，保留 KV/DO 与原有设备数据。线上 GET OAuth metadata=200、GET router /health=200、无凭据 MCP=401、无效 pairing poll=403（PAIR_INVALID）。
+- 统一 UnifyHarness（不是旧 macHarness）实际 list_devices 已返回设备 unity.local / cu-5c6b94d1-3fef-47b7-855a-84fde8858c81 为 online=true，call_device_tool(get_harness_status,{}) 实际成功，工具状态 ready，报告 46 个本地工具。该 Mac 之前已有配对凭据，自动配对测试未覆盖真实未配对设备的首次授权；浏览器批准流程的端到端真实验收需在新设备进行，不能把模拟单测当作实机通过。
+
+- 生产部署时先发布 auth Worker（只新增私有验证接口），再发布 router Worker；**不轮换 OWNER_AUTH_KEY，不触发 OAuth EPOCH 变动，不重新创建 KV/DO**。部署前后需验证 Worker Secret 存在和 OAuth 元数据、MCP 401。
+
+## 2026-10-29 OAuth 授权页 Chrome 跳转停留修复
+
+- 实际浏览器证据：POST /authorize 返回 302，Location 指向 ChatGPT OAuth callback，但页面停留在表单。Cookie 随请求正常发送，Owner Key 正确，问题不是 Cookie 或密钥。
+- 根因：授权页面 Content-Security-Policy 采用 form-action 'self'；Chromium 对表单 POST 后的跨站 302 重定向也执行该策略，阻止到 ChatGPT 的导航。
+- 修复：CSP 仅新增 https://chatgpt.com 为允许的表单重定向目的地，保留 default-src 'none'、base-uri 'none'、frame-ancestors 'none' 等安全限制。没有更改 Worker Secret、OAuth KV、Router Worker 或设备配对数据。
+- Mac 本地 OAuth 专项 6/6 PASS，全量 npm test 为 636 项（620 PASS，16 SKIP，0 FAIL），Wrangler auth/router dry-run PASS。仅授权 Worker 部署成功，版本 7187c3e7-25d7-4b2d-969f-62b6f2b8b1ec；部署后 OWNER_AUTH_KEY 仍存在。
+- 线上验证：新的授权 GET 为 HTTP 200；响应 CSP 允许 https://chatgpt.com 且原限制完整，授权 Cookie 设置正常。ChatGPT 实际 OAuth Callback/Token Exchange 仍待用户从 ChatGPT 新发起完整授权验证，旧标签页保留旧 CSP 不能复用。
+- 改动保留在本地开发分支，未提交、推送或上传 CI 工件，保留其他已有未提交改动。
+
+## 2026-10-28 既有 Cloudflare Owner Key 实机轮换
+
+- 按用户授权执行：Mac 本地 Cloudflare 管理令牌有效、账户唯一、Workers 子域名及 OAuth KV 唯一；授权 Worker 和 Router Worker 均存在。
+- 新 Owner Key 先用 Electron safeStorage 加密持久保存 pending，再由 Wrangler 通过 stdin 更新现有授权 Worker 的 OWNER_AUTH_KEY；不重建 Worker、KV 或设备列表，也不调整 OAuth epoch。
+- 云端执行返回 phase=ready、remote=deployed、keyPersistedLocally=true；独立 Electron 进程重启后仍可解密，凭据记录 complete=true，无 pending 残留。密钥明文未输出到会话/日志。
+- 桌面连接配置提供复制、限时 30 秒显示与手动轮换入口；轮换操作需要显式确认，旧 Owner Key 不再支持新授权，已签发 OAuth Token 不会自动撤销。
+- 真正的 ChatGPT OAuth 重新授权尚待用户在客户端验收。本轮只执行 Mac 本机构建，不上传 GitHub CI 产物。
+
+## 2026-10-28 Owner Key 授权指引更正
+
+- 移除普通连接页 Owner Key 复制与显示按钮，并撤销上轮增加的敏感密钥读取/剪贴板 IPC，防止客户端暴露原文。
+- Cloudflare Worker Secret 无法在部署后回显；新增 Cloudflare 控制台入口，仅核对 chattoharness-auth → Settings → Variables and Secrets 下 OWNER_AUTH_KEY 是否已配置。
+- 初始化密钥生成于最初初始化的设备并本地加密保存。丢失后先查原设备或安全备份，不能直接从 Cloudflare 复制；如需轮换必须协调更新云端和本地，禁止重复初始化。
+- 本地 macOS 14 上执行 Node 全量回归，并仅打包可直接运行的 .app；不生成 DMG、不使用 GitHub CI、不部署真实云端服务。
+
+## 2026-10-28 Owner Key 入口常驻与 Mac 本地打包验收
+
+- 「连接配置」新增常驻的 Owner Key 卡片、复制按钮和显式显示/隐藏；本机没有密钥时也能看到卡片和禁用的操作。密钥只在用户按下显示时通过本地 IPC 读取，30 秒后或窗口失焦立即清空；不会放入常规状态对象或日志。
+- macOS 14.6.1 本机检查默认 LocalHarness 配置目录，cloudflare-bootstrap/credentials.json 不存在；当前 Mac 无法复制真实 Owner Key。不能从已部署的 Worker 地址反推出密钥，应从原始初始化设备找回，不得覆盖现有 Owner Secret。
+- 本机专项测试 44/44 PASS；全量 npm test 632 项（617 PASS、15 SKIP、0 FAIL）。本机 CTH_DIST_SUBDIR=dev-ownerkey-20261028 npm run build 仅创建可运行 .app，不生成 DMG；最低系统 14.0 和 codesign 核验通过，隔离 GUI smoke PASS。真实 Cloudflare OAuth 未验收。
+- 额外添加打包 GUI 检查：没有 Owner Key 时复制和显示按钮保持可见但禁用，并提示来源。已保留运行中的现有应用和用户配置。
+
 # Development record — Windows computer use
 
 

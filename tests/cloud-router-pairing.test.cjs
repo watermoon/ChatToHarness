@@ -14,6 +14,7 @@ class Storage {
  async get(k){return this.map.get(k);}
  async put(k,v){this.map.set(k,v);}
  async delete(k){this.map.delete(k);}
+ async list({prefix='',limit=200}={}){return new Map([...this.map].filter(([k])=>k.startsWith(prefix)).slice(0,limit));}
  async transaction(fn){return fn(this);}
 }
 const identity={id,name:'MacBook',platform:'darwin'};
@@ -120,4 +121,35 @@ test('current device pairing rejects missing or malformed MCP URL before network
  }
  assert.equal(attempted,0);
  assert.equal(origin('https://router.example/mcp'),'https://router.example');
+});
+
+test('disconnect preference is encrypted on disk and survives app restart',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cth-pair-pause-'));
+ try{
+  const store=new CloudPairingStore(dir,safeStorage);
+  const deviceToken='a'.repeat(43);
+  store.save('https://test.example/mcp',deviceToken);
+  const before=JSON.parse(fs.readFileSync(store.file,'utf8'));
+  assert.equal(store.setPaused(true).paused,true);
+  const after=JSON.parse(fs.readFileSync(store.file,'utf8'));
+  assert.equal(after.encryptedToken,before.encryptedToken);
+  assert.equal(new CloudPairingStore(dir,safeStorage).read().paused,true);
+  assert.notEqual(store.setPaused(false).paused,true);
+  assert.notEqual(new CloudPairingStore(dir,safeStorage).read().paused,true);
+  assert.ok(!fs.readFileSync(store.file,'utf8').includes(deviceToken));
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('cloud reset deletes only local pairing credential, not unrelated local files',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cth-local-reset-'));
+ try{
+  const store=new CloudPairingStore(dir,safeStorage);
+  store.save('https://test.example/mcp','a'.repeat(43));
+  const sentinel=path.join(dir,'keep-tunnel-settings.json');
+  fs.writeFileSync(sentinel,'{"preserved":true}');
+  assert.equal(store.read()!=null,true);
+  store.clearLocalPairing();
+  assert.equal(store.read(),null);
+  store.clearLocalPairing();
+  assert.equal(fs.readFileSync(sentinel,'utf8'),'{"preserved":true}');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

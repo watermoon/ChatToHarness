@@ -195,3 +195,84 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
 .cloud-device-choice[aria-current="true"]{color:var(--accent);font-weight:650}
 .cloud-device-choice:focus-visible{outline:2px solid #98b4fa;outline-offset:3px}
 .cloud-device-state{white-space:nowrap}
+
+/* Cloud setup is intentionally compact; documentation lives in Help. */
+.cloud-owner-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.cloud-owner-bar h3{font-size:12px;margin:0;flex-shrink:0}
+.cloud-owner-bar #cloud-owner-key-status{font-size:11px;color:var(--muted);flex:1;min-width:140px}
+.cloud-advanced-details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.cloud-advanced-details summary,.cloud-help-details summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:11px}
+.cloud-advanced-details .hero-actions{margin-top:12px;flex-wrap:wrap}
+.cloud-pair-fields{display:grid;grid-template-columns:minmax(0,1fr);width:100%;margin-top:10px}
+.cloud-pair-fields .field,.cloud-pair-fields input{width:100%;min-width:0;box-sizing:border-box}
+.cloud-pair-fields input[type=url],.cloud-pair-fields input[type=password]{display:block;margin-top:9px;height:41px;padding:0 12px;border:1px solid #dde5ee;border-radius:6px;background:#fff;color:var(--ink);font:inherit}
+.cloud-pair-fields input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cloud-help-details{padding:14px 20px}
+.cloud-help-details p{margin:12px 0;font-size:11px;line-height:1.7}
+@media(max-width:680px){.cloud-owner-bar{align-items:stretch}.cloud-owner-bar #cloud-owner-key-status{min-width:100%;flex-basis:100%}}
+
+/* Compact, contextual cloud-setup guidance; long tutorials live in Help. */
+.cloud-setup-guidance{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.cloud-setup-guidance span{flex:1;min-width:220px;font-size:11px;line-height:1.6;color:var(--muted)}
+.cloud-setup-guidance button{white-space:nowrap}
+#cloud-subdomain-picker{grid-column:1/-1}
+#cloud-subdomain-input{box-sizing:border-box;width:100%;min-width:0}
+
+
+/* On-demand information and pairing; the default settings view stays compact. */
+.cloud-heading-line{display:flex;align-items:center;gap:7px;min-width:0}
+.cloud-heading-line h2,.cloud-heading-line h3{margin:0}
+.cloud-info{display:inline-flex;align-items:center;position:relative;flex-shrink:0}
+.cloud-info>summary{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #a0afc3;border-radius:50%;color:#6482a1;font-size:10px;font-weight:700;line-height:1;cursor:pointer;list-style:none;user-select:none}
+.cloud-info>summary::-webkit-details-marker{display:none}
+.cloud-info>summary::marker{content:""}
+.cloud-info>summary:hover{border-color:#3564af;color:#2856bd}
+.cloud-info>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cloud-info-content{position:absolute;right:0;top:25px;z-index:80;width:max-content;max-width:min(340px,75vw);min-width:190px;white-space:normal;overflow-wrap:anywhere;padding:11px 13px;border:1px solid #dbe5f0;border-radius:8px;background:#fff;box-shadow:0 9px 24px #1e335528;color:#4b5e72;font-size:11px;line-height:1.65;font-weight:400}
+.cloud-current-device-row{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:11px;color:#65798e}
+.cloud-current-device-row .cloud-info-content{right:auto;left:0}
+#cloud-pair-trigger[hidden]{display:none!important}
+#cloud-manual-pairing[hidden],#cloud-pair-dialog-status[hidden]{display:none!important}
+.cloud-pair-dialog{width:min(470px,calc(100vw - 36px));max-width:470px;border:1px solid #d9e4f0;border-radius:11px;background:var(--paper);box-shadow:0 16px 50px #101d3940;padding:22px;color:var(--ink)}
+.cloud-pair-dialog::backdrop{background:#09172b85}
+.cloud-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:22px}
+.cloud-dialog-header h3{font-size:16px;margin:0}
+.cloud-dialog-close{border:0;background:transparent;color:#73818f;font:23px/1 inherit;cursor:pointer;padding:3px 9px;border-radius:6px}
+.cloud-dialog-close:focus-visible,.cloud-dialog-close:hover{outline:2px solid #7d9bd4}
+.cloud-pair-choice-actions{display:flex;gap:10px;flex-wrap:wrap}
+.cloud-pair-choice-actions .button{flex:1;min-width:135px}
+#cloud-manual-pairing{margin-top:15px;padding-top:15px;border-top:1px solid var(--line)}
+#cloud-pair-dialog-status{margin:12px 0 0;color:#9b4c47;font-size:11px;overflow-wrap:anywhere}
+@media(max-width:420px){.cloud-pair-choice-actions{flex-direction:column}}
+
+.cloud-current-device-row{font-size:15px;font-weight:600;color:var(--ink);gap:12px;flex-wrap:wrap}
+.cloud-current-device-row>#cloud-current-device{min-width:0;overflow-wrap:anywhere}
+.cloud-current-device-row .button{font-size:12px;font-weight:500}
+.cloud-current-device-row .cloud-info-content{font-weight:400}
+#cloud-device-disconnect[hidden],#cloud-device-reconnect[hidden]{display:none!important}
+
+/* Device actions: one clear current-device row, roster beneath. */
+.cloud-current-device-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 20px;font-size:15px;line-height:1.5;font-weight:600;color:var(--ink)}
+.cloud-current-device-row .cloud-info{margin-right:auto}
+.cloud-current-device-row .button{min-width:82px;font-weight:600;font-size:13px}
+.cloud-visually-hidden{position:absolute!important;width:1px;height:1px;clip:rect(0,0,0,0);white-space:nowrap;overflow:hidden}
+.cloud-device-choice.is-current{font-weight:750}
+.cloud-device-choice[aria-current="true"]{font-weight:700}
+.cloud-device-item.is-current-device{border-color:#b9cbee;background:rgba(71,121,206,.05)}
+.cloud-device-state{display:flex;align-items:center;gap:7px;white-space:normal}
+.cloud-device-online{display:inline-block;padding:2px 8px;border-radius:999px;background:#def5e9;color:#14643c!important;font-size:11px!important;font-weight:700}
+.cloud-device-offline{color:var(--muted)}
+.cloud-device-current-label{font-size:13px;font-weight:800;color:var(--ink)}
+.cloud-device-picker .cloud-device-list{max-height:320px}
+
+.cloud-device-menu-id{font-size:11px;color:var(--muted);font-weight:400}
+.cloud-device-item .cloud-device-choice strong{font-size:13px;font-weight:750;color:var(--ink)}
+.cloud-device-item .cloud-device-choice span{font-size:11px}
+.cloud-device-item .cloud-device-choice .cloud-device-menu-id{color:var(--muted)}
+.cloud-current-device-row .cloud-info{margin-right:0}
+
+.cloud-device-roster-header{justify-content:flex-start;gap:6px}
+.cloud-refresh-inline{margin-left:10px;font-size:12px;min-height:30px;padding:5px 9px}
+.cloud-device-roster-header .cloud-heading-line{flex-wrap:wrap}
+.cloud-owner-bar[hidden]{display:none!important}
+.cloud-device-platform,.cloud-device-harness-version{font-size:11px;color:var(--muted)}
