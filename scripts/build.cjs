@@ -95,6 +95,7 @@ function main() {
   if (!fs.existsSync(executable)) throw new Error('应用打包未生成预期入口。');
   const resources = process.platform === 'darwin' ? path.join(application, 'Contents', 'Resources') : path.join(application, 'resources');
   verifyResources(resources, { packaged: true, signed: config.signed });
+  require('./verify-app-archive.cjs').verifyAppArchive(resources);
   // The cloud bootstrap must work without a pre-installed Node.js or Wrangler.
   for(const file of ['cloud-router/node_modules/wrangler/bin/wrangler.js',
     'cloud-router/node_modules/@cloudflare/workers-oauth-provider/package.json',

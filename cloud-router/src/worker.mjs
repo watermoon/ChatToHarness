@@ -42,6 +42,16 @@ export class DeviceHub {
   }
   async fetch(req) {
     const pathname = new URL(req.url).pathname;
+    if(pathname==='/account-enroll'&&req.method==='POST'){
+      const raw=await req.text();if(raw.length>2048)return json({error:'DEVICE_INVALID'},413);
+      let input;try{input=JSON.parse(raw);}catch{return json({error:'DEVICE_INVALID'},400);}
+      if(!ID.test(input?.device_id||'')||typeof input.name!=='string'||!input.name.trim()||input.name.length>80||!['win32','darwin','linux'].includes(input.platform)||!/^[a-f0-9]{64}$/.test(input.device_token_hash||''))return json({error:'DEVICE_INVALID'},400);
+      await this.ctx.storage.transaction(async tx=>{
+        const key='device:'+input.device_id,old=await tx.get(key);
+        await tx.put(key,{hash:input.device_token_hash,name:input.name,platform:input.platform,paired_at:old?.paired_at||Date.now()});
+      });
+      return json({device_id:input.device_id,enrolled:true});
+    }
     if(pathname==='/internal-reset-device-hub' && req.method==='POST'){
       for(const ws of this.ctx.getWebSockets()){
         try{ws.close(1001,'Service reset');}catch{}
@@ -225,10 +235,11 @@ export const authorizedWorker = {
     if (message.method === 'initialize') return json(rpc(id, {protocolVersion: PROTOCOL_VERSION,
       capabilities: {tools: {}}, serverInfo: {name: 'chattoharness-cloud-router', version: '0.1.0'}}));
     if (message.method === 'ping') return json(rpc(id, {}));
-    if (message.method === 'tools/list') return json(rpc(id, {tools}));
+    if (message.method === 'tools/list') return json(rpc(id, {tools:env.CF_ACCOUNT_ID?tools.filter(t=>t.name!=='create_pairing_code'):tools}));
     if (message.method !== 'tools/call') return json(rpcError(id, -32601, 'Method not found'));
     const {name, arguments: args = {}} = message.params || {};
     if (name === 'create_pairing_code') {
+      if(env.CF_ACCOUNT_ID)return json(rpcError(id,-32601,'Use Cloudflare account connection'));
       const upstream=await getHub(env).fetch(new Request('https://hub.internal/pair-create',{method:'POST'}));
       return json(rpc(id,textResult(await upstream.json())));
     }

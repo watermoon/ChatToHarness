@@ -59,12 +59,13 @@
         cloudPairUrl.value='';
         if(current){updateCloudSetupStatus(current);updateCloudPairStatus(current);}
       }else{
-        cloudResetProgress.textContent=t('重置未完成，可重试：')+(result.error||'');
+        cloudResetProgress.textContent=t('重置未完成，可重试。');
+        showCloudError(result.error,'云端重置未完成');
         cloudResetSubmit.disabled=false;
       }
     }catch(e){
-      cloudResetProgress.textContent=t('重置未完成，可重试：')+
-        String(e?.message||e).slice(0,100);
+      cloudResetProgress.textContent=t('重置未完成，可重试。');
+      showCloudError(e,'云端重置未完成');
       cloudResetSubmit.disabled=false;
     }
   });
@@ -88,6 +89,41 @@
   };
   window.addEventListener('blur',hideOwnerKey);
   const cloudSetupStatus=byId('cloud-setup-status');
+  const cloudErrorDialog=byId('cloud-error-dialog');
+  const cloudErrorTitle=byId('cloud-error-title');
+  const cloudErrorMessage=byId('cloud-error-message');
+  const closeCloudErrorDialog=()=>{if(cloudErrorDialog?.open)cloudErrorDialog.close();};
+  byId('cloud-error-close')?.addEventListener('click',closeCloudErrorDialog);
+  byId('cloud-error-confirm')?.addEventListener('click',closeCloudErrorDialog);
+  const cloudErrorMessages={
+    CLOUD_WRANGLER_FAILED_LOGIN:'未能完成 Cloudflare 登录。请在浏览器中登录 Cloudflare 并批准授权，然后重新点击“自动初始化云端”重试。',
+    CLOUD_LOGIN_REQUIRED:'未能完成 Cloudflare 登录。请在浏览器中登录 Cloudflare 并批准授权，然后重新点击“自动初始化云端”重试。',
+    CLOUD_NODE_RUNTIME_MISSING:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
+    CLOUD_WRANGLER_RUNTIME_MISSING:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
+    CLOUD_WRANGLER_START_FAILED:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
+    CLOUD_WRANGLER_TIMEOUT:'本机云端部署工具响应超时。请检查网络连接后重试；如果问题持续，请重启 ChatToHarness。',
+    CLOUD_WRANGLER_FAILED_DEPLOY:'Cloudflare 资源部署失败。请确认当前账户具有 Workers 部署权限，并检查网络连接后重试。',
+    CLOUD_WRANGLER_FAILED_SECRET:'无法保存 Cloudflare Worker 密钥。请确认当前账户具有 Worker 密钥管理权限后重试。',
+    CLOUD_SUBDOMAIN_CREATE_FAILED:'无法创建 Workers 子域名。请检查 Cloudflare 账户权限和子域名设置后重试。',
+    CLOUD_SUBDOMAIN_CREATE_UNVERIFIED:'尚无法确认 Workers 子域名已创建。请刷新云端配置后再试，不要重复创建其他资源。',
+    CLOUD_SUBDOMAIN_ALREADY_EXISTS:'所选 Workers 子域名已被占用。请换一个子域名后重试。',
+    CLOUD_ACCOUNT_NOT_FOUND:'未找到可用的 Cloudflare 账户。请确认浏览器登录的是正确账户，并检查账户权限。',
+    CLOUD_API_UNAVAILABLE:'无法访问 Cloudflare API。请检查网络连接和账户权限后重试。',
+    CLOUD_REMOTE_VERIFICATION_FAILED:'服务已尝试部署，但未能通过远端健康检查。请刷新云端配置，并检查 Cloudflare Workers 状态。',
+    CLOUD_REMOTE_STATE_UNKNOWN:'无法确认云端服务当前状态。请检查网络连接后刷新云端配置；不要直接重置或覆盖现有服务。'
+  };
+  const showCloudError=(error,title='云端操作未完成')=>{
+    const raw=String(error?.message||error||'');
+    const code=(raw.match(/CLOUD_[A-Z0-9_]+/)||[])[0];
+    const message=t(cloudErrorMessages[code]||'云端操作未能完成。请检查 Cloudflare 登录状态、账户权限和网络连接后重试。');
+    if(!cloudErrorDialog||!cloudErrorTitle||!cloudErrorMessage||typeof cloudErrorDialog.showModal!=='function'){
+      if(typeof window.alert==='function')window.alert(t(title)+'\n\n'+message);
+      return;
+    }
+    cloudErrorTitle.textContent=t(title);
+    cloudErrorMessage.textContent=message;
+    if(!cloudErrorDialog.open)cloudErrorDialog.showModal();
+  };
   const cloudPairUrl=byId('cloud-mcp-url');
   cloudPairUrl?.addEventListener('input',()=>{cloudPairUrl.dataset.manuallyEdited='true';});
   const cloudPhaseLabels={idle:'尚未初始化',checking:'正在检测云端服务',checking_account:'验证 Cloudflare 账户',
@@ -152,13 +188,13 @@
     const cloud=state?.cloudBootstrap;
     if(!cloud)return;
     const remoteLabel=t(remoteLabels[cloud.remote]||'云端尚未检测');
-    cloudSetupStatus.textContent=t(cloudPhaseLabels[cloud.phase]||'尚未初始化')+
-      ' · '+remoteLabel+(cloud.error?'：'+cloud.error:'')+
-      (cloud.remote==='deployed'&&!cloud.hasOwnerKey?
+    cloudSetupStatus.textContent=t(cloud.identityMode==='cloudflare'&&cloud.remote==='deployed'&&['already_deployed','recovery_required'].includes(cloud.phase)?'云端服务已就绪':cloudPhaseLabels[cloud.phase]||'尚未初始化')+
+      ' · '+remoteLabel+
+      (cloud.identityMode!=='cloudflare'&&cloud.remote==='deployed'&&!cloud.hasOwnerKey?
         ' · '+t('本机尚未保存所有者密钥，不能直接覆盖云端服务'):'');
     const guide=cloud.guidance||{};
     const guideCode=guide.code||'start';
-    const guideLabel=cloudGuideLabels[guideCode]||cloudGuideLabels.start;
+    const guideLabel=cloud.identityMode==='cloudflare'&&guideCode==='owner_recovery'?'使用同一个 Cloudflare 账户连接此设备':cloudGuideLabels[guideCode]||cloudGuideLabels.start;
     cloudSetupGuidance.textContent=t(guideLabel)+
       (guide.step?' · '+t('初始化进度')+' '+guide.step+'/'+(guide.totalSteps||6):'');
     cloudSetupHelpLink.hidden=!guide.helpUrl;
@@ -170,16 +206,17 @@
     if(cloud.phase==='choose_subdomain' && !cloudSubdomainInput.dataset.manuallyEdited)
       cloudSubdomainInput.value=cloud.suggestedSubdomain||'';
     cloudSetupStart.disabled=Boolean(cloud.busy)||remote==='deployed'||
-      remote==='unreachable'||(remote==='partial'&&!cloud.hasOwnerKey);
+      (remote==='partial'&&!cloud.hasOwnerKey&&cloud.identityMode!=='cloudflare');
     cloudSetupStart.textContent=t(remote==='deployed'?
-      (cloud.hasOwnerKey?'云端服务已初始化':'云端已部署（需关联）'):
+      (cloud.identityMode==='cloudflare'||cloud.hasOwnerKey?'云端服务已初始化':'云端已部署（需关联）'):
       remote==='partial'&&cloud.hasOwnerKey?'修复云端服务':
       cloud.phase==='authorization_required'?'授权并初始化云端服务':
+      (remote==='unreachable'||cloud.phase==='verification_unavailable'||cloud.phase==='failed')?'重试云端初始化':
       cloud.phase==='choose_subdomain'?'创建子域名并继续初始化':
       cloud.phase==='choose_account'||cloud.phase==='choose_kv'?'继续自动初始化':
       '自动初始化云端');
     cloudSetupRefresh.disabled=Boolean(cloud.busy);
-    cloudSetupReinitialize.disabled=Boolean(cloud.busy)||remote!=='deployed'||!cloud.hasOwnerKey;
+    cloudSetupReinitialize.disabled=Boolean(cloud.busy)||remote!=='deployed'||(!cloud.hasOwnerKey&&cloud.identityMode!=='cloudflare');
     if(cloudResetDialog.open && cloud.busy)
       cloudResetProgress.textContent=t(cloudPhaseLabels[cloud.phase]||'正在彻底重置云端…');
     cloudResetTrigger.disabled=Boolean(cloud.busy)||!cloud.hasOwnerKey||
@@ -203,8 +240,15 @@
         !cloudPairUrl.dataset.manuallyEdited)cloudPairUrl.value=cloud.mcp_url;
   };
   const discoverCloud=async input=>{
-    try{const state=await api.cloudBootstrapDiscover(input||{});updateCloudSetupStatus({cloudBootstrap:state});}
-    catch(e){cloudSetupStatus.textContent=t('自动识别失败')+'：'+String(e?.message||e).slice(0,120);}
+    try{
+      const state=await api.cloudBootstrapDiscover(input||{});
+      updateCloudSetupStatus({cloudBootstrap:state});
+      if(input&&((state?.phase==='failed'&&state.error)||state?.remote==='unreachable'))
+        showCloudError(state.error||'CLOUD_REMOTE_STATE_UNKNOWN','自动识别失败');
+    }catch(e){
+      cloudSetupStatus.textContent=t('自动识别失败');
+      if(input)showCloudError(e,'自动识别失败');
+    }
   };
   cloudSetupRefresh?.addEventListener('click',()=>{void discoverCloud({
     accountId:cloudAccountSelect.value||lastDiscoveredAccount
@@ -217,12 +261,11 @@
   cloudSubdomainInput?.addEventListener('input',()=>{cloudSubdomainInput.dataset.manuallyEdited='true';});
   cloudSetupStart?.addEventListener('click',async()=>{
     cloudSetupStart.disabled=true;
-    try{await api.cloudBootstrapStart({
+    try{const result=await api.cloudBootstrapStart({
       accountId:cloudAccountSelect.value||lastDiscoveredAccount,
       kvId:cloudKvSelect.value,
       subdomain:cloudSubdomainPicker.hidden?'':cloudSubdomainInput.value.trim()
-    });}catch(e){cloudSetupStatus.textContent=t('云端初始化失败')+
-      '：'+String(e.message||e).slice(0,120);}
+    });if(result?.phase==='failed'&&result.error)showCloudError(result.error,'云端初始化失败');}catch(e){showCloudError(e,'云端初始化失败');}
     finally{const state=await api.getState().catch(()=>null);updateCloudSetupStatus(state);}
   });
   cloudSetupReinitialize?.addEventListener('click',async()=>{
@@ -231,15 +274,15 @@
     try{
       const updated=await api.cloudBootstrapReinitialize();
       updateCloudSetupStatus({cloudBootstrap:updated});
-    }catch(e){cloudSetupStatus.textContent=t('重新初始化失败')+
-      '：'+String(e?.message||e).slice(0,120);}
+      if(updated?.phase==='failed'&&updated.error)showCloudError(updated.error,'重新初始化失败');
+    }catch(e){showCloudError(e,'重新初始化失败');}
     finally{const state=await api.getState().catch(()=>null);if(state)updateCloudSetupStatus(state);}
   });
   cloudOwnerKeyCopy?.addEventListener('click',async()=>{
     try{
       await api.cloudBootstrapCopyKey();
       cloudOwnerKeyStatus.textContent=t('授权密钥已复制；请在 ChatGPT 授权页面粘贴');
-    }catch(e){cloudOwnerKeyStatus.textContent=t('复制密钥失败')+'：'+String(e?.message||e).split(':')[0].slice(0,80);}
+    }catch(e){cloudOwnerKeyStatus.textContent=t('复制密钥失败');showCloudError(e,'复制密钥失败');}
   });
   cloudOwnerKeyRevealButton?.addEventListener('click',async()=>{
     if(!cloudOwnerKeyReveal.hidden){hideOwnerKey();return;}
@@ -259,9 +302,9 @@
     try{
       const result=await api.cloudBootstrapRotateOwner({accountId:cloudAccountSelect.value||lastDiscoveredAccount,kvId:cloudKvSelect.value||undefined});
       updateCloudSetupStatus({cloudBootstrap:result});
-      cloudOwnerKeyStatus.textContent=t(result.phase==='ready'?'轮换成功，请复制新 Owner Key':'轮换未完成，请检查状态')+
-        (result.error?'：'+result.error:'');
-    }catch(e){cloudOwnerKeyStatus.textContent=t('轮换未完成，请检查状态')+'：'+String(e?.message||e).split(':')[0].slice(0,80);}
+      if(result.phase==='ready')cloudOwnerKeyStatus.textContent=t('轮换成功，请复制新 Owner Key');
+      else{cloudOwnerKeyStatus.textContent=t('轮换未完成，请检查状态');showCloudError(result.error,'Owner Key 轮换未完成');}
+    }catch(e){cloudOwnerKeyStatus.textContent=t('轮换未完成，请检查状态');showCloudError(e,'Owner Key 轮换未完成');}
     finally{const fresh=await api.getState().catch(()=>null);if(fresh)updateCloudSetupStatus(fresh);}
   });
   const cloudPairCode=byId('cloud-pair-code');
@@ -424,7 +467,7 @@
     const cloud=state?.cloudRouter;
     displayCloudDevices(cloud);
     currentCloudPaired=Boolean(cloud?.paired);
-    const pending=['awaiting_approval','requesting_approval'].includes(cloud?.phase);
+    const pending=['awaiting_approval','requesting_approval'].includes(cloud?.phase)||(!currentCloudPaired&&cloud?.phase==='connecting');
     const connected=currentCloudPaired&&Boolean(cloud?.connected);
     cloudDeviceDisconnect.hidden=!connected;
     cloudDeviceReconnect.hidden=!currentCloudPaired||connected;
@@ -438,15 +481,6 @@
   };
   cloudAutoPairSubmit?.addEventListener('click',async()=>{
     const mcpUrl=cloudPairUrl.value.trim();
-    try{
-      const url=new URL(mcpUrl);
-      if(url.protocol!=='https:'||url.pathname!=='/mcp'||url.search||url.hash||
-        url.username||url.password)throw Error('CLOUD_PAIR_URL_INVALID');
-    }catch{
-      closePairDialog();
-      cloudPairStatus.textContent=t('MCP 地址无效，请填写完整的 HTTPS 地址');
-      cloudPairUrl.focus();return;
-    }
     cloudAutoPairSubmit.disabled=true;
     pairDialogMessage(t('正在申请设备绑定…'));
     try{
@@ -454,7 +488,8 @@
       updateCloudPairStatus({cloudRouter:state});
       closePairDialog();
     }catch(e){
-      pairDialogMessage(t('自动绑定失败：')+String(e?.message||e).slice(0,120));
+      const messages={CLOUD_ACCOUNT_PERMISSION_DENIED:'云端无法验证 Cloudflare 账户权限，请重新登录 Cloudflare 后重试。',CLOUD_ACCOUNT_DEVICE_INVALID:'设备登记信息未通过验证，请刷新设备信息后重试。',CLOUD_ACCOUNT_SERVICE_UNAVAILABLE:'云端设备登记服务暂时不可用，请稍后重试。',CLOUD_ACCOUNT_RESPONSE_INVALID:'云端返回的设备登记结果无效，请更新云端服务后重试。'};
+      pairDialogMessage(t(messages[e?.message]||'设备连接失败，请检查账户授权和网络设置后重试。'));
     }finally{
       const latest=await api.getState().catch(()=>null);
       if(latest)updateCloudPairStatus(latest);

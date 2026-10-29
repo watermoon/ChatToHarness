@@ -174,7 +174,7 @@ function registerIPC(){
   });
   bind('update-install',installUpdate);
   bind('update-release',async()=>{const url=updater?.status().releaseUrl;if(url)await shell.openExternal(url);});
-  bind('save-settings',input=>action(async()=>{const before=JSON.stringify(settings.public());settings.save(input);if(before!==JSON.stringify(settings.public())||input?.apiKey?.trim()||input?.proxyPassword?.length||input?.clearProxyPassword===true)await runtime.disconnect();}));
+  bind('save-settings',input=>action(async()=>{const before=JSON.stringify(settings.public());const proxyBefore=JSON.stringify(settings.public().proxy);settings.save(input);if(proxyBefore!==JSON.stringify(settings.public().proxy)||input?.proxyPassword?.length||input?.clearProxyPassword===true)cloudRouter?.startStored();if(before!==JSON.stringify(settings.public())||input?.apiKey?.trim()||input?.proxyPassword?.length||input?.clearProxyPassword===true)await runtime.disconnect();}));
   bind('connect',connect);
   bind('proxy-defaults',()=>require('./proxy-config.cjs').defaultBypass());
   let proxyTestBusy=false;
@@ -278,8 +278,8 @@ function registerIPC(){
   bind('mcp-resolve-approval',mcp(input=>{mcpManager.approve(input);return state();}));
   bind('cloud-bootstrap-discover',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.preview(input);});
   bind('cloud-bootstrap-runtime-check',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.runtimeCheck();});
-  bind('cloud-bootstrap-start',input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.init(input);});
-  bind('cloud-bootstrap-reinitialize',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.reinitialize();});
+  bind('cloud-bootstrap-start',async input=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');const result=await cloudBootstrap.initializeAccount(input);if(result.phase==='ready')await cloudRouter.autoPair({});return cloudBootstrap.status();});
+  bind('cloud-bootstrap-reinitialize',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.initializeAccount({redeploy:true});});
   bind('cloud-bootstrap-reset',async input=>{
     if(!cloudBootstrap||!cloudRouter)throw Error('CLOUD_SETUP_UNAVAILABLE');
     return cloudBootstrap.resetCloud({confirmation:input?.confirmation,
@@ -333,11 +333,21 @@ else{
     preferences=new Preferences(home,locale);locale=preferences.locale;
     try{
       fs.mkdirSync(home,{recursive:true,mode:0o700});if(fs.lstatSync(home).isSymbolicLink())throw new Error();fs.chmodSync(home,0o700);
-      updater=new Updater({current:app.getVersion(),platform,arch:process.arch,directory:path.join(home,'updates'),packaged:app.isPackaged,fetcher:(url,options)=>net.fetch(url,options)});
+      settings=new Settings(home,safeStorage);
+      const harnessNetwork=require('./cloud-network.cjs').cloudNetwork({
+        sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),
+        getConfig:()=>settings.public().proxy,getPassword:()=>settings.getProxyPassword(),
+        resolveSystemProxy:async target=>{
+          const proxySession=session.fromPartition('harness-network-proxy');
+          await proxySession.setProxy({mode:'system'});
+          return require('./system-proxy.cjs').proxyURL(await proxySession.resolveProxy(target));
+        }
+      });
+      updater=new Updater({current:app.getVersion(),platform,arch:process.arch,directory:path.join(home,'updates'),packaged:app.isPackaged,fetcher:harnessNetwork.fetcher});
       updater.on('state',publish);
       if(!testMode)updater.setAutomatic(preferences.autoCheckUpdates);else updater.update({automatic:preferences.autoCheckUpdates});
       versions={...versions,...JSON.parse(fs.readFileSync(path.join(resources,'bundle.json'),'utf8'))};
-      settings=new Settings(home,safeStorage);
+
       const tunnelScript=testMode&&process.env.LOCALHARNESS_TEST_TUNNEL_SCRIPT;
       if(tunnelScript&&(!path.isAbsolute(tunnelScript)||!fs.statSync(tunnelScript).isFile()))throw new Error();
       diagnosticWriter=new DiagnosticWriter(home,{onError:error=>{diagnosticError=sanitize(error?.code||'DIAGNOSTICS_UNAVAILABLE',120);publish();}});
@@ -369,7 +379,7 @@ else{
       const services=new HarnessServices({computerUse,home,nodePath:runtime.paths.node,processHost:runtime.paths.processHost,engineEntry:runtime.paths.desktopCommander,configHome:runtime.localHome,versions,history,
         build:require('./build-identity.cjs').captureBuild({root:path.join(__dirname,'..'),resources,packaged:app.isPackaged}),
         runtime:()=>runtime.status(),catalog:()=>mcpManager?.visibleTools()||[],mcp:()=>mcpManager?.status()||{}});
-      mcpManager=new McpManager({settings:mcpSettings,services,enableContent:true,enableProjectGrants:true,nodePath:runtime.paths.node,processHost:runtime.paths.processHost,fetcher:(url,options)=>net.fetch(url,options),log,
+      mcpManager=new McpManager({settings:mcpSettings,services,enableContent:true,enableProjectGrants:true,nodePath:runtime.paths.node,processHost:runtime.paths.processHost,fetcher:harnessNetwork.fetcher,log,
         builtinFactory:async desktopSettings=>{
           runtime.prepare(desktopSettings);
           return {transport:'stdio',command:runtime.paths.node,args:[runtime.launcher,runtime.paths.desktopCommander,String(process.pid)],cwd:desktopSettings.directories[0],env:runtime.childEnvironment(desktopSettings)};
@@ -380,7 +390,7 @@ else{
       // Never alter the current Secure MCP Tunnel until real multi-device acceptance.
       const {CloudRouterService}=require('./cloud-router-service.cjs');
       const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
-      cloudRouter=new CloudRouterService({manager:mcpManager,identity:computerUse.deviceIdentity,
+      cloudRouter=new CloudRouterService({getAccountConnection:input=>cloudBootstrap.accountConnection(input),fetcher:harnessNetwork.fetcher,socketFactory:harnessNetwork.createWebSocket,manager:mcpManager,identity:computerUse.deviceIdentity,
         pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish,
          getOwnerKey:requestedUrl=>{
            try{
@@ -392,8 +402,9 @@ else{
            }catch{return '';}
          }});
       const {CloudBootstrap}=require('./cloud-bootstrap.cjs');
-      cloudBootstrap=new CloudBootstrap({home,safeStorage,nodePath:runtime.paths.node,
-        sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),onChange:publish});
+      cloudBootstrap=new CloudBootstrap({home,safeStorage,nodePath:runtime.paths.node,openExternal:url=>shell.openExternal(url),
+        sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),onChange:publish,
+        fetcher:harnessNetwork.fetcher,cliEnv:harnessNetwork.cliEnv});
       if(!testMode)cloudRouter.startStored();
 
       mcpManager.on('state',()=>{const toolsCount=mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});

@@ -22,7 +22,7 @@ function config(source,s,kv,role,accountId) {
    main:path.join(source,auth?'auth-server/index.mjs':'src/secure-worker.mjs'),
    compatibility_date:'2026-10-26',compatibility_flags:['global_fetch_strictly_public'],
    workers_dev:true,vars:{OAUTH_ISSUER:u.auth,MCP_RESOURCE_URL:u.mcp,OWNER_AUTH_EPOCH:'v1'}};
- if(accountId)v.account_id=accountId;
+ if(accountId){v.account_id=accountId;v.vars.CF_ACCOUNT_ID=accountId;}
  if(auth){if(kv)v.kv_namespaces=[{binding:'OAUTH_KV',id:kv}];}
  else{
    v.vars.ALLOWED_TOOLS='get_harness_status';
@@ -32,10 +32,10 @@ function config(source,s,kv,role,accountId) {
  }
  return v;
 }
-function run(node,script,args,{cwd,input,timeoutMs=180000,onOutput}={}) {
+function run(node,script,args,{cwd,input,timeoutMs=180000,onOutput,env={}}={}) {
  return new Promise((resolve,reject)=>{
   const child=spawn(node,[script,...args],{cwd,windowsHide:true,
-   stdio:['pipe','pipe','pipe'],env:{...process.env,WRANGLER_SEND_METRICS:'false',NO_COLOR:'1'}});
+   stdio:['pipe','pipe','pipe'],env:{...process.env,...env,WRANGLER_SEND_METRICS:'false',NO_COLOR:'1'}});
   let out='',err='',done=false;
   const limit=(s,chunk)=>(s+String(chunk)).slice(-24576);
   child.stdout.on('data',c=>{out=limit(out,c);onOutput?.(String(c));});
@@ -55,8 +55,8 @@ function atomic(file,obj) {
  }catch(e){try{fs.rmSync(temp,{force:true});}catch{}throw e;}
 }
 class CloudBootstrap {
- constructor({home,safeStorage,nodePath,sourceDir,runner=run,fetcher=globalThis.fetch,onChange=()=>{}}){
-  Object.assign(this,{home,safeStorage,nodePath,sourceDir,runner,fetcher,onChange});
+ constructor({home,safeStorage,nodePath,sourceDir,runner=run,fetcher=globalThis.fetch,onChange=()=>{},openExternal=async()=>{},cliEnv=async()=>({})}){
+  Object.assign(this,{home,safeStorage,nodePath,sourceDir,runner,fetcher,onChange,openExternal,cliEnv});
   this.dir=path.join(home,'cloudflare-bootstrap');
   this.file=path.join(this.dir,'credentials.json');
   this.phase='idle';this.error='';this.busy=false;
@@ -74,7 +74,7 @@ class CloudBootstrap {
    return d;
   }catch{return null;}
  }
- status(){return {phase:this.phase,error:this.error,busy:this.busy,resetInProgress:Boolean(this.record?.resetStage),
+ status(){return {identityMode:'cloudflare',phase:this.phase,error:this.error,busy:this.busy,resetInProgress:Boolean(this.record?.resetStage),
   subdomain:this.record?.subdomain||this.discoveredSubdomain,
   accountId:this.record?.accountId||this.discoveredAccountId,
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
@@ -110,8 +110,9 @@ class CloudBootstrap {
   const check=this.runtimeCheck();
   if(!check.nodePresent)throw Error('CLOUD_NODE_RUNTIME_MISSING');
   if(!check.wranglerPresent)throw Error('CLOUD_WRANGLER_RUNTIME_MISSING');
+  if(args[0]==='login'&&this.runner===run)require('./cloud-keyring.cjs').prepareKeyring(this.sourceDir);
   const script=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
-  const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs,onOutput});
+  const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs,onOutput,env:await this.cliEnv()});
   if(res.code!==0)throw Error('CLOUD_WRANGLER_FAILED_'+args[0].toUpperCase());
   return res.stdout;
  }
@@ -161,11 +162,12 @@ class CloudBootstrap {
      if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
      this.loginCode='';this.loginOutputTail='';
      this.phaseSet('authorize_browser');
-     await this.cli(['login','--device','--use-keyring'],undefined,360000,chunk=>{
+     await this.cli(['login','--device','--use-keyring','--no-browser'],undefined,360000,chunk=>{
        this.loginOutputTail=(this.loginOutputTail+chunk).slice(-1600);
        // Parse only the short Wrangler device code, never expose CLI output or tokens.
        const m=this.loginOutputTail.match(/(?:enter the code\s*:|user_code=)\s*([A-Za-z0-9]{8,12})/i);
-       if(m&&this.loginCode!==m[1]){this.loginCode=m[1];this.onChange();}
+       if(m&&this.loginCode!==m[1]){this.loginCode=m[1];this.onChange();
+         void this.openExternal('https://dash.cloudflare.com/oauth2/device?user_code='+encodeURIComponent(m[1])).catch(()=>{});}
      });
      this.loginCode='';this.loginOutputTail='';
      token=await this.cli(['auth','token','--json']);
@@ -255,6 +257,61 @@ class CloudBootstrap {
   }catch(e){this.phaseSet('failed',String(e?.message||'CLOUD_ROTATION_FAILED').split(':')[0].slice(0,100));}
   finally{this.busy=false;this.onChange();}
   return this.status();
+ }
+ async initializeAccount(input={}){
+  try{await this.accountConnection(input);return this.status();}
+  catch(e){if(e.message!=='CLOUD_ACCOUNT_SELECTION_REQUIRED')this.phaseSet('failed',String(e.message||'CLOUD_SETUP_FAILED'));return this.status();}
+ }
+ async accountConnection(input={}){
+  if(this.busy)throw Error('CLOUD_SETUP_BUSY');
+  this.busy=true;this.onChange();
+  try{
+   let found=await this.findOptions(input,true);
+   if(found.needs==='subdomain'&&input.subdomain){
+    const auth=await this.cli(['auth','token','--json']);
+    await createWorkersSubdomain({fetcher:this.fetcher,tokenOutput:auth,accountId:found.accountId,subdomain:subdomain(input.subdomain)});
+    found=await this.findOptions({accountId:found.accountId},false);
+   }
+   if(found.needs){this.phaseSet('choose_'+found.needs);throw Error('CLOUD_ACCOUNT_SELECTION_REQUIRED');}
+   if(!['deployed','partial','not_deployed'].includes(this.remote))throw Error('CLOUD_REMOTE_STATE_UNKNOWN');
+   const mcp=urls(found.subdomain).mcp;
+   if(input.mcpUrl&&input.mcpUrl!==mcp)throw Error('CLOUD_EXISTING_ACCOUNT_MISMATCH');
+   let kv=found.kvId;
+   if(!kv){
+    if(this.remote!=='not_deployed')throw Error('CLOUD_KV_CREATION_UNVERIFIED');
+    this.phaseSet('creating_kv');const files=this.configs(found.subdomain,'',found.accountId);
+    const result=await this.cli(['kv','namespace','create','OAUTH_KV','--config',files.auth]);
+    kv=result.match(/["']?id["']?\s*[:=]\s*["']?([a-f0-9]{32})/i)?.[1];
+    if(!kv)throw Error('CLOUD_KV_CREATION_UNVERIFIED');
+   }
+   let current=false;
+   if(this.remote==='deployed'&&!input.redeploy){
+    const health=await this.fetcher(new URL('/health',mcp).href,{signal:AbortSignal.timeout(12000)});
+    current=(await health.json()).identity_mode==='cloudflare';
+   }
+   if(!current){
+    const files=this.configs(found.subdomain,kv,found.accountId);
+    if(this.remote!=='not_deployed'){
+     const headers=require('./cloudflare-discovery.cjs').headersFromWrangler(await this.cli(['auth','token','--json']));
+     for(const [role,name] of [['auth',AUTH],['router',ROUTER]]){
+      const response=await this.fetcher('https://api.cloudflare.com/client/v4/accounts/'+found.accountId+'/workers/scripts/'+name+'/settings',{headers,signal:AbortSignal.timeout(15000)});
+      if(response.status===404)continue;
+      if(!response.ok&&response.status!==200)throw Error('CLOUD_API_UNAVAILABLE');
+      const data=await response.json();if(!data.success||!Array.isArray(data.result?.bindings))throw Error('CLOUD_API_RESPONSE_INVALID');
+      const config=JSON.parse(fs.readFileSync(files[role],'utf8'));
+      const prior=Object.fromEntries(data.result.bindings.filter(v=>['plain_text','json'].includes(v.type)).map(v=>[v.name,v.type==='plain_text'?v.text:v.json]));
+      config.vars={...prior,...config.vars};atomic(files[role],config);
+     }
+    }
+    this.phaseSet('redeploying_auth');await this.cli(['deploy','--config',files.auth]);
+    this.phaseSet('redeploying_router');await this.cli(['deploy','--config',files.router]);
+    if(await this.checkRemote(found.subdomain,null)!=='deployed')throw Error('CLOUD_REMOTE_VERIFICATION_FAILED');
+   }
+   this.record={schema:1,subdomain:found.subdomain,accountId:found.accountId,kvId:kv,encryptedKey:this.record?.encryptedKey||'',complete:true};this.save();
+   const auth=JSON.parse(await this.cli(['auth','token','--json']));
+   if(!['oauth','api_token'].includes(auth.type)||typeof auth.token!=='string')throw Error('CLOUD_LOGIN_REQUIRED');
+   this.phaseSet('ready');return {mcpUrl:mcp,token:auth.token};
+  }finally{this.busy=false;this.onChange();}
  }
  async resetCloud(options){return require('./cloud-full-reset.cjs').resetManagedCloud(this,options);}
  async reinitialize() {

@@ -9,10 +9,10 @@ const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pair
 const SAFE = Object.freeze(['get_harness_status']);
 const FORBIDDEN = new Set(['computer_use','start_process','start_task','write_file','edit_block','apply_project_edit']);
 class CloudRouterService {
-  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket}) {
+  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection}) {
     if (!manager || !identity?.id || !identity.platform || !identity.name)
       throw new Error('CLOUD_ROUTER_DEVICE_UNAVAILABLE');
-    this.manager = manager;
+    this.manager = manager;this.getAccountConnection=getAccountConnection;
     this.pairStore=pairStore;
     this.getOwnerKey=getOwnerKey;
     this.fetcher=fetcher;
@@ -20,7 +20,7 @@ class CloudRouterService {
     this.localOsVersion=LOCAL_OS_VERSION;
     this.log = log;
     this.onChange = onChange;
-    this.WebSocketImpl = WebSocketImpl;
+    this.WebSocketImpl = WebSocketImpl;this.socketFactory=socketFactory;
     this.agent = null;
     this.phase = 'disabled';
     this.lastError = '';
@@ -40,7 +40,7 @@ class CloudRouterService {
         throw new Error('CLOUD_ROUTER_INVALID_URL');
       this.agent = connectAgent({
         url: parsed.href, token, deviceId: this.identity.id, name: this.identity.name,
-        platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,
+        platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
         allowedTools: SAFE,
         execute: (name, args) => this.execute(name, args),
         onStatusChange: () => this.onChange(this.status())
@@ -95,7 +95,32 @@ class CloudRouterService {
     if(!saved)throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
     return this.start({enabled:true,url:saved.agentUrl,token:saved.token});
   }
+  async connectAccount(mcpUrl){
+    if(this.pairStore.read())return this.startStored();
+    if(this.autoPairPending)throw Error('CLOUD_SETUP_BUSY');
+    const operation={};this.autoPairPending=operation;
+    this.phase='connecting';this.onChange(this.status());
+    try{
+      const account=await this.getAccountConnection({mcpUrl});
+      if(this.autoPairPending!==operation)throw Error('CLOUD_CONNECTION_CANCELLED');
+      const crypto=require('node:crypto'),token=crypto.randomBytes(32).toString('base64url');
+      const result=await this.fetcher(new URL('/account-enroll',account.mcpUrl).href,{
+        method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+account.token},
+        body:JSON.stringify({device_id:this.identity.id,name:this.identity.name,platform:this.identity.platform,device_token_hash:crypto.createHash('sha256').update(token).digest('hex')}),signal:AbortSignal.timeout(20000)
+      });
+      const body=await result.json().catch(()=>({}));
+      if(this.autoPairPending!==operation)throw Error('CLOUD_CONNECTION_CANCELLED');
+      if(!result.ok)throw Error(result.status===403?'CLOUD_ACCOUNT_PERMISSION_DENIED':result.status===400?'CLOUD_ACCOUNT_DEVICE_INVALID':'CLOUD_ACCOUNT_SERVICE_UNAVAILABLE');
+      if(body.enrolled!==true||body.device_id!==this.identity.id)throw Error('CLOUD_ACCOUNT_RESPONSE_INVALID');
+      this.pairStore.save(account.mcpUrl,token);const saved=this.pairStore.read();
+      if(!saved)throw Error('CLOUD_PAIR_SECURE_STORAGE_REQUIRED');
+      this.mcpUrl=account.mcpUrl;this.autoPairPending=null;
+      const state=this.start({enabled:true,url:saved.agentUrl,token:saved.token});void this.refreshDevices();return state;
+    }catch(e){this.phase='failed';this.lastError=String(e.message||'CLOUD_ACCOUNT_ENROLL_FAILED');throw e;}
+    finally{if(this.autoPairPending===operation)this.autoPairPending=null;this.onChange(this.status());}
+  }
   async autoPair({mcpUrl,openExternal}={}){
+    if(this.getAccountConnection)return this.connectAccount(mcpUrl);
     if(!this.pairStore)throw Error('CLOUD_PAIR_STORE_UNAVAILABLE');
     if(this.pairStore.read())return this.startStored();
     if(this.autoPairPending)throw Error('CLOUD_AUTO_PAIR_ALREADY_RUNNING');

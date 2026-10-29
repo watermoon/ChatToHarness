@@ -1,3 +1,4 @@
+import {cloudflareAuthorize} from './cloudflare-login.mjs';
 // OAuth 2.1 authorization server: self-hosted single-owner consent.
 // No Cloudflare Access or GitHub; the operator enters a 256-bit secret once
 // during browser authorization. The secret is never included in issued tokens.
@@ -86,6 +87,7 @@ async function authorize(request,env,oauth) {
 export default class ChatToHarnessAuth extends WorkerEntrypoint {
   fetch(request) {
     const oauth=provider(this.env);
+    if(this.env.CF_ACCOUNT_ID&&['/authorize','/cloudflare-login'].includes(new URL(request.url).pathname))return cloudflareAuthorize(request,this.env,oauth.getOAuthApi(this.env));
     if(new URL(request.url).pathname==='/authorize')
       return authorize(request,this.env,oauth.getOAuthApi(this.env));
     // Discovery, token exchange, DCR and revocation are public OAuth protocol

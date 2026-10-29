@@ -1,3 +1,59 @@
+## 2026-10-29 实际自动登记失败修复与用户实测成功
+
+- 真实 Worker 日志定位：账户验证函数使用 redirect=error，Cloudflare edge fetch 仅支持 follow/manual，直接抛 TypeError，未发起账户权限验证。客户端将该失败吞并为 CLOUD_ACCOUNT_ENROLL_FAILED。
+- 改为 redirect=manual，非成功响应仍拒绝，不跟随任何重定向；保留脱敏的状态/错误码诊断，新增模拟 edge 限制与重定向拒绝回归。Auth 和 Router 已实际部署该修复，当前已安装客户端无需换包。
+- 用户在本轮修复部署后实际重试并明确反馈：已成功连接。不能将此前单测或公开 403 探测误记为此前绑定已通过；真实绑定成功证据为本次用户反馈。
+- 专项 5/5 PASS，两个 Worker dry-run PASS；完整 npm test：695 项，676 PASS、19 SKIP、0 FAIL。客户端错误细分和中文提示已在源码改进，未为这些提示另行构建覆盖正在运行的程序。
+
+## 2026-10-29 单用户多设备：Cloudflare 作为唯一交互身份
+
+- 桌面新接入通过内置 Wrangler Cloudflare 授权，读取账户/子域名/Worker/KV 验证归属；缺少服务时创建，旧服务自动迁移。初始化完成自动登记本机，不再要求 Owner Key、手动批准或配对码。
+- account-enroll 云端端点使用固定部署的 CF_ACCOUNT_ID，经 Cloudflare 官方账户脚本 API 验证 Bearer 的实际权限；客户端不能自报账户绕过验证。设备本地产生随机连接凭据，云端只保存摘要，后续重连复用现有凭据。未认证请求 403，旧配对入口在账户模式为 410；原 DO 设备记录保持。
+- OAuth 登录页改为 Cloudflare device grant，浏览器绑定的短时会话、Origin/自定义头校验、Cloudflare 账户归属检查完成后自动继续 OAuth；无自定义批准/Owner Key 表单。真实线上登录入口 200，并成功获得 Cloudflare 登录链接。
+- 迁移前读取保留已有普通变量，与新 CF_ACCOUNT_ID 合并；不使用会保留旧身份变量的 keep-vars 标志。密钥、KV 和 DO 记录均不清理。Owner Key 旧方法/DOM 仅为旧版兼容保留，不在新产品流程暴露。
+- 真实部署 Auth/Router 已完成；公开探测 identity_mode=cloudflare，account-enroll 无凭据 403，pair-request 410。带真实 Cloudflare 凭据的在线登记测试被自动审批拦截，未执行；无凭据公开探测和账户/自动登记模拟测试通过，不能宣称真实绑定端到端已完成。
+- 最终 npm test：694 项，675 PASS、19 SKIP、0 FAIL。两个 Worker dry-run PASS；包括账户身份绑定、跨账户拒绝、无 Owner 初始化、保留自定义变量、设备自动登记、无 Owner OAuth、CSRF 拒绝等回归。构建统一覆盖 dist/win-unpacked，构建期间不再改动源文件。
+
+## 2026-10-29 打包档案完整性与 Electron 欢迎页
+
+- 上轮打包期间修改被收录的 docs/dev.md，造成 app.asar 目录大小/偏移与实际文件内容不一致，后续 271 个文件校验失败（包含 package.json）。自定义 Electron 发行目录还保留 default_app.asar，错误启动暴露默认欢迎页。
+- afterPack 移除默认欢迎应用，并按包内 SHA256 校验所有已打包文件及 package.json/app/main.cjs 启动入口；最终 build 再验一次。新增真实档案损坏和欢迎页残留的回归测试。构建期间禁止编辑任何被收录的源文件。
+- 档案专项测试 1/1 PASS；重新构建结果以实际命令和校验日志为准。
+
+## 2026-10-29 Harness 外部连接统一读取代理配置
+
+- 自动绑定与设备列表遗漏 fetcher 注入、设备 Agent 使用默认 WebSocket，未遵循 Harness 代理设置。更新检查和远程 HTTP MCP 原使用 Electron 默认网络，也未统一。
+- 主进程创建共享网络适配器；云端初始化/管理、绑定/轮询/设备列表、设备 WebSocket、更新检查/下载、远程 HTTP MCP 全部注入该适配器。每次请求或重连读取当前配置与目标绕过规则，按 direct/system/manual 选择路由；配置变更重建已配对 Agent 连接，保留暂停断开状态。已有 Tunnel 仍使用原 selectProxy 路径。本机进程间回环连接保持本机。
+- WebSocket 异步选路支持失败退避与停止期间丢弃迟到连接，不重放远端调用。
+- 全量 npm test：686 项，667 PASS、19 SKIP、0 FAIL。补充真实 HTTP CONNECT 转发与配置切换到直连验证，以及 WebSocket 选路、代理失败重试、停止时未完成选路回归。
+- 尚未以真实账户完成自动绑定端到端验证；测试不代表真实绑定成功。构建统一覆盖 dist/win-unpacked。
+
+## 2026-10-29 云端检测失败后的重试入口
+
+- UI 将 remote=unreachable 直接作为初始化按钮禁用条件，导致检测失败后无法从初始化入口重新检测/授权。现改为可点击的重试云端初始化；busy、已部署以及无本机密钥的部分部署继续保持原保护。
+- 重试仍调用原 findOptions 并重新验证状态，未知状态拒绝任何部署。新增网络失败后恢复测试及实际 renderer 禁用表达式测试。专项 38/38 PASS。
+- 当前本机只读探测（system 模式，已核实系统代理 127.0.0.1:7897）：already_deployed、remote=deployed、hasOwnerKey=false，无错误；没有部署或修改远端资源。
+
+## 2026-10-29 授权后令牌超时与 Harness 代理配置
+
+- 实际日志显示 device OAuth 授权后 token endpoint 请求多次超时。云端 bootstrap 原未接入 Harness 代理设置。
+- cloud-network 统一复用 selectProxy，按当前 Harness direct/system/manual 模式及绕过规则选路，手动认证读取已保存密码；CLI 显式覆盖继承的代理环境变量，云端 API 为每个 URL 选择 dispatcher。授权完成后状态切回 discovering。
+- 专项 cloud-network + cloud-bootstrap 25/25 PASS，包含三种模式、绕过规则和配置变更。真实 OAuth 完成和后续部署仍待新版运行验证，不能以单测替代。
+
+## 2026-10-29 Windows 云端授权未打开修复
+
+- 真实复现：内置 Node 执行 Wrangler 4.152.0 device login，在请求授权前因缺少 @napi-rs/keyring 退出；管道启动不能自动交互安装。
+- 固定打包 keyring 1.3.0 和平台二进制，Windows 登录前放入 Wrangler 实际解析的 native/keyring 目录；保留加密凭据存储。应用用 Electron 打开带本次验证码的官方授权页面，Wrangler 禁止重复打开。
+- 真实进程探测：成功生成 device code，探测主动终止，未完成 OAuth 或部署云端。全量 676 项：657 PASS、19 SKIP、0 FAIL；浏览器回调断言专项 21/21 PASS。
+
+## 2026-10-29 云端初始化错误提示改为用户可读弹框
+
+- 根因：设置页将 cloud.error、result.error 直接拼接到状态文字，导致 CLOUD_WRANGLER_FAILED_LOGIN 等内部代码暴露给用户。
+- 调整：新增统一云端错误弹框；根据错误码映射登录、运行时、部署、密钥、子域名、账户权限和远端验证等可操作的说明。设置页状态只显示阶段和远端状态，不再展示原始错误码。
+- 验收：node --test tests/cloud-error-ui.test.cjs 与 npm test。
+- Verified on MOON: targeted tests 14/14 PASS; npm test 676 total, 657 PASS, 19 SKIP, 0 FAIL; Electron development UI smoke PASS.
+
+
 ## 2026-10-29 设备列表 Harness 与 OS 产品版本上报
 
 - 原因：本地 Agent 已发 harness_version，但云端新 Worker 未部署、设备未重新注册，云端设备记录缺版本；旧 UI 对本机也未使用本地 package.json 兜底，故显示 Harness —。

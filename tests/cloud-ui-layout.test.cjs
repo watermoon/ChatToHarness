@@ -62,7 +62,7 @@ test('owner card supports explicit copy, reveal and rotation while retaining Clo
  assert.match(renderer,/ownerKeyTimer=setTimeout\(hideOwnerKey,30000\)/);
 });
 
-test('compact cloud card and full width pairing fields with browser approval',()=>{
+test('compact cloud card uses Cloudflare account without owner approval',()=>{
  const html=app('index.html'),css=app('style.css'),main=app('main.cjs'),preload=app('preload.cjs');
  assert.equal((html.match(/id="cloud-setup-heading"/g)||[]).length,1);
  assert.equal((html.match(/id="cloud-owner-key-heading"/g)||[]).length,1);
@@ -74,8 +74,8 @@ test('compact cloud card and full width pairing fields with browser approval',()
  assert.match(html,/id="cloud-current-device-id"/);
  assert.match(css,/#cloud-pair-trigger\[hidden\]\{display:none!important\}/);
  assert.match(css,/\.cloud-info>summary:focus-visible/);
- for(const message of ['自动发现 Cloudflare 服务，管理 Owner Key 和接入状态.',
-  '通过浏览器批准当前设备，后续启动自动连接。',
+ for(const message of ['使用同一个 Cloudflare 账户自动发现服务并连接各台设备。',
+  '使用同一个 Cloudflare 账户连接设备，后续启动自动连接。',
   '展示已配对的电脑；离线设备也会保留。仅已配对设备可查看列表。'])
    assert.ok(html.includes(message.replace(/\.$/,'。')),'help text should be available on demand');
  assert.match(html,/class="cloud-info"/);
@@ -151,4 +151,15 @@ test('local device badge is bold and cloud roster can show real OS product versi
  assert.match(renderer,/cloud\.local_os_version/);
  assert.match(renderer,/cloud\.local_harness_version/);
  assert.match(renderer,/device\.os_version/);
+});
+
+test('cloud retry remains available after detection failure without enabling unsafe overwrite',()=>{
+ const source=app('renderer.js');
+ const assignment=source.match(/cloudSetupStart\.disabled=([\s\S]*?);/)[1];
+ const disabled=new Function('cloud','remote','return '+assignment);
+ assert.equal(disabled({busy:false},'unreachable'),false);
+ assert.equal(disabled({busy:true},'unreachable'),true);
+ assert.equal(disabled({busy:false},'deployed'),true);
+ assert.equal(disabled({busy:false,hasOwnerKey:false},'partial'),true);
+ assert.match(source,/verification_unavailable'.*重试云端初始化/);
 });

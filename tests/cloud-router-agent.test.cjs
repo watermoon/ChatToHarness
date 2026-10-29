@@ -56,3 +56,20 @@ test('only registered, live socket accepts work and closed agent never reconnect
   await new Promise(resolve => setTimeout(resolve, 15));
   assert.equal(FakeWS.instances.length, 1);
 });
+
+test('asynchronous proxy selection never reconnects after agent stop',async()=>{
+ let release;const pending=new Promise(resolve=>{release=resolve;});
+ const agent=connectAgent(options({socketFactory:()=>pending}));
+ await new Promise(resolve=>setImmediate(resolve));agent.close();
+ const socket=new FakeWS('wss://router.example/agent');release(socket);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(socket.readyState,3);assert.equal(socket.sent.length,0);
+});
+test('agent retries failed proxy resolution and registers with selected socket',async()=>{
+ let attempts=0;let selected;
+ const agent=connectAgent(options({socketFactory:async url=>{if(++attempts===1)throw Error('proxy unavailable');return selected=new FakeWS(url);}}));
+ try{
+  for(let i=0;i<50&&!selected;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.ok(selected);selected.opened();assert.equal(selected.sent[0].type,'register');
+ }finally{agent.close();}
+});

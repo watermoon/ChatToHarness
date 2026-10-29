@@ -19,4 +19,15 @@ if(process.platform==='darwin') {
   config.beforePack=async()=>verifyMacHelper(path.join(__dirname,'resources/computer-use/ChatToHarness.MacComputerUse'));
   config.afterPack=async context=>verifyMacHelper(path.join(context.appOutDir,'ChatToHarness.app/Contents/Resources/computer-use/ChatToHarness.MacComputerUse'));
 }
+const previousAfterPack=config.afterPack;
+config.afterPack=async context=>{
+  if(previousAfterPack)await previousAfterPack(context);
+  const path=require('node:path'),fs=require('node:fs');
+  const resources=context.electronPlatformName==='darwin'?
+    path.join(context.appOutDir,'ChatToHarness.app/Contents/Resources'):path.join(context.appOutDir,'resources');
+  // Custom unpacked Electron distributions retain the stock welcome app.
+  const welcome=path.join(resources,'default_app.asar');
+  if(fs.existsSync(welcome))fs.unlinkSync(welcome);
+  require('./scripts/verify-app-archive.cjs').verifyAppArchive(resources);
+};
 module.exports=config;

@@ -2,17 +2,29 @@
 // Device-side transport. The desktop app must supply an authorized local MCP executor.
 // A disconnected call is never replayed; the cloud reports the outcome as unknown.
 const VALID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
-function connectAgent({url, deviceId, name, platform, harnessVersion, osVersion, token, execute, allowedTools, WebSocketImpl = globalThis.WebSocket, reconnectMs = 2000, onStatusChange = () => {}}) {
+function connectAgent({url, deviceId, name, platform, harnessVersion, osVersion, token, execute, allowedTools, WebSocketImpl = globalThis.WebSocket, socketFactory, reconnectMs = 2000, onStatusChange = () => {}}) {
   if (!/^wss:\/\//.test(url) || !VALID.test(deviceId || '') || typeof token !== 'string' ||
       token.length < 24 || typeof execute !== 'function' || typeof WebSocketImpl !== 'function')
     throw new Error('INVALID_AGENT_CONFIGURATION');
   const allow = new Set(allowedTools || ['get_harness_status']);
-  let ws, timer, closed = false, authenticated = false, attempt = 0;
+  let ws, timer, closed = false, authenticated = false, attempt = 0, generation=0;
   function open() {
     if (closed) return;
     authenticated = false;
-    ws = new WebSocketImpl(url);
-    const socket = ws;
+    const current=++generation;
+    if(socketFactory){
+      Promise.resolve().then(()=>socketFactory(url)).then(socket=>{
+        if(closed||current!==generation){socket.close();return;}
+        attach(socket);
+      }).catch(()=>{
+        if(closed||current!==generation)return;
+        onStatusChange('reconnecting');
+        timer=setTimeout(()=>{timer=undefined;open();},Math.min(30000,reconnectMs*(2**Math.min(4,attempt++))));
+      });
+    }else attach(new WebSocketImpl(url));
+  }
+  function attach(socket){
+    ws=socket;
     socket.addEventListener('open', () => {
       if (closed || socket !== ws) return;
       socket.send(JSON.stringify({type: 'register', device_id: deviceId, name, platform, harness_version:harnessVersion, os_version:osVersion, token}));

@@ -364,10 +364,12 @@ test('Wrangler browser device login publishes only short code and clears it afte
  const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
  const runner=x.bootstrap.runner;
  let denyOnce=true,seen='';
+ const opened=[];x.bootstrap.openExternal=async url=>opened.push(url);
  x.bootstrap.runner=async(node,script,args,opts)=>{
    if(args[0]==='auth'&&denyOnce){denyOnce=false;return {code:1,stdout:'',stderr:''};}
    if(args[0]==='login'){
      assert.equal(args[1],'--device');
+     assert.ok(args.includes('--no-browser'));
      opts.onOutput?.('To authorize Wrangler, please visit:\nhttps://dash.cloudflare.com/oauth2/device\nand enter the code:\n jPqK6Qvs\n');
      seen=x.bootstrap.status().loginCode;
      return {code:0,stdout:'Successfully logged in'};
@@ -377,6 +379,7 @@ test('Wrangler browser device login publishes only short code and clears it afte
  const result=await x.bootstrap.init({});
  assert.equal(result.phase,'ready',result.error);
  assert.equal(seen,'jPqK6Qvs');
+ assert.deepEqual(opened,['https://dash.cloudflare.com/oauth2/device?user_code=jPqK6Qvs']);
  assert.equal(result.loginCode,'');
  assert.equal(JSON.stringify(result).includes('f'.repeat(64)),false);
 });
@@ -409,4 +412,49 @@ test('reinitialize without a trusted local managed service never deploys',async(
  const result=await fixture.bootstrap.reinitialize();
  assert.equal(result.error,'CLOUD_REINITIALIZE_REQUIRES_MANAGED_SERVICE');
  assert.equal(fixture.calls.some(a=>a[0]==='deploy'),false);
+});
+
+test('unknown cloud status permits retry while deployment still requires fresh verified absence',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const original=x.bootstrap.fetcher;let offline=true;
+ x.bootstrap.fetcher=async(url,opts)=>{if(offline&&url.includes('.workers.dev'))throw Error('network unavailable');return original(url,opts);};
+ const failed=await x.bootstrap.init({});
+ assert.equal(failed.remote,'unreachable');
+ assert.equal(failed.error,'CLOUD_REMOTE_STATE_UNKNOWN');
+ assert.equal(x.calls.some(args=>['deploy','secret','kv'].includes(args[0])),false);
+ offline=false;
+ assert.equal((await x.bootstrap.init({})).phase,'ready');
+});
+
+test('account-only initialization creates service without Owner Key or secret writes',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const status=await x.bootstrap.initializeAccount({});
+ assert.equal(status.phase,'ready',status.error);
+ assert.equal(status.identityMode,'cloudflare');
+ assert.equal(x.calls.some(args=>args[0]==='secret'),false);
+ assert.equal(x.bootstrap.record.encryptedKey,'');
+ assert.equal(JSON.stringify(status).includes('x'.repeat(64)),false);
+});
+
+test('both generated Workers bind their immutable Cloudflare account identity',()=>{
+ const account='b'.repeat(32);
+ for(const role of ['auth','router'])assert.equal(config(source,'watermoon3322',kvId,role,account).vars.CF_ACCOUNT_ID,account);
+});
+
+test('account migration preserves custom Worker variables and never rotates an Owner Key',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ await x.bootstrap.init({});const original=x.bootstrap.fetcher;
+ x.bootstrap.fetcher=async(url,opts)=>{
+  if(url.includes('/storage/kv/namespaces'))return {status:200,json:async()=>({success:true,result:[{id:kvId,title:'OAUTH_KV'}]})};
+  if(url.endsWith('/settings'))return {status:200,ok:true,json:async()=>({success:true,result:{bindings:[{type:'plain_text',name:'CUSTOM_VAR',text:'preserved'}]}})};
+  return original(url,opts);
+ };
+ const before=x.calls.filter(args=>args[0]==='secret').length;
+ const state=await x.bootstrap.initializeAccount({redeploy:true});
+ assert.equal(state.phase,'ready',state.error);
+ assert.equal(x.calls.filter(args=>args[0]==='secret').length,before);
+ for(const role of ['auth','router']){
+  const config=JSON.parse(fs.readFileSync(path.join(x.home,'cloudflare-bootstrap',role+'.jsonc'),'utf8'));
+  assert.equal(config.vars.CUSTOM_VAR,'preserved');assert.equal(config.vars.CF_ACCOUNT_ID,'b'.repeat(32));
+ }
 });
