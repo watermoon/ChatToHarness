@@ -6,7 +6,7 @@ const {osProductVersion}=require('./device-os-version.cjs');
 const LOCAL_VERSION=require('../package.json').version;
 const LOCAL_OS_VERSION=osProductVersion();
 const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pairing.cjs');
-const SAFE = Object.freeze(['get_harness_status']);
+const SAFE = Object.freeze(['get_harness_status','get_tool_result_page','get_tool_result_file']);
 const FORBIDDEN = new Set(['computer_use','start_process','start_task','write_file','edit_block','apply_project_edit']);
 class CloudRouterService {
   constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection}) {
@@ -219,10 +219,33 @@ class CloudRouterService {
   }
   async execute(name, args) {
     if (FORBIDDEN.has(name) || !SAFE.includes(name)) throw new Error('CLOUD_ROUTER_TOOL_DENIED');
-    if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length)
+    if (!args || typeof args !== 'object' || Array.isArray(args))
       throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
-    // Go through the existing MCP Manager; do not instantiate an unscoped shell or service.
-    return this.manager.call(name, args);
+    const broker=this.manager.broker;
+    if(name==='get_harness_status'){
+      if(Object.keys(args).length)throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
+      // Keep results in the local MCP result store so large read-only output
+      // can be recovered through the same two paging tools.
+      return broker?.toolCall ? broker.toolCall(name,args) : this.manager.call(name,args);
+    }
+    const keys=name==='get_tool_result_page'
+      ? ['result_id','offset','length']:['result_id','file_index'];
+    if(!Object.keys(args).every(key=>keys.includes(key)) ||
+       typeof args.result_id!=='string' || !/^result_[a-f0-9]{32}$/.test(args.result_id) ||
+       name==='get_tool_result_page'&&
+         (args.offset!==undefined&&(!Number.isSafeInteger(args.offset)||args.offset<0) ||
+          args.length!==undefined&&(!Number.isSafeInteger(args.length)||args.length<4||args.length>4096)) ||
+       name==='get_tool_result_file'&&(!Number.isSafeInteger(args.file_index)||args.file_index<0))
+      throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
+    if(!broker?.results?.load||!broker?.toolCall)throw new Error('CLOUD_ROUTER_TOOL_UNAVAILABLE');
+    // Never let a cloud result ID read saved local shell, file, or other MCP
+    // results. Only the explicitly remote-allowed status tool may be paged.
+    let record;
+    try{record=await broker.results.load(args.result_id);}
+    catch{return broker.toolCall(name,args);}
+    if(record.source.tool!=='get_harness_status')
+      throw new Error('CLOUD_ROUTER_TOOL_DENIED');
+    return broker.toolCall(name,args);
   }
   status() {
     return {paused:this.paused,enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,

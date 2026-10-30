@@ -52,7 +52,7 @@ test('internal MCP dispatcher exposes only router tools (external auth is mandat
   const init = await f.mcp('initialize', {});
   assert.equal(init.body.result.serverInfo.name, 'chattoharness-cloud-router');
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),
-    ['create_pairing_code','list_devices','call_device_tool']);
+    ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','call_device_tool']);
 });
 test('devices are independently authenticated and listed', async () => {
   const f = await fixture();
@@ -158,4 +158,56 @@ test('registered OS product and Harness versions appear in paired roster; old pe
  assert.equal(current.os_version,'macOS 14.6.1');
  assert.equal(older.harness_version,'');
  assert.equal(older.os_version,'');
+});
+
+test('inspect_client_context reads only this request params._meta and is explicitly read-only', async () => {
+  const f = await fixture();
+  const descriptor = (await f.mcp('tools/list', {})).body.result.tools.find(x => x.name === 'inspect_client_context');
+  assert.deepEqual(descriptor.annotations, {readOnlyHint: true, destructiveHint: false, openWorldHint: false});
+  assert.deepEqual(descriptor.inputSchema.properties, {});
+  const meta = {
+    'openai/session': 'anonymized-conversation',
+    'openai/userAgent': 'ChatGPT Desktop/26.10 Mac',
+    'openai/userLocation': {city: 'Singapore', country: 'SG', timezone: 'Asia/Singapore',
+      latitude: 1.3, longitude: 103.8, secretLocationField: 'private-data'},
+    'openai/locale': 'zh-CN',
+    'openai/subject': 'anonymized-user',
+    'openai/organization': 'anonymized-org',
+    'openai/unknown': 'do-not-return',
+    authorization: 'Bearer should-not-leak'
+  };
+  const response = (await f.mcp('tools/call', {name: 'inspect_client_context', arguments: {}, _meta: meta})).body.result;
+  const result = response.structuredContent;
+  assert.deepEqual(JSON.parse(response.content[0].text), result);
+  assert.equal(result.source, 'params._meta');
+  assert.equal(result.request_meta_present, true);
+  assert.deepEqual(result.fields['openai/session'], {present: true, value: 'anonymized-conversation'});
+  assert.deepEqual(result.fields['openai/userAgent'], {present: true, value: 'ChatGPT Desktop/26.10 Mac'});
+  assert.deepEqual(result.fields['openai/userLocation'], {present: true,
+    value: {city: 'Singapore', country: 'SG', timezone: 'Asia/Singapore', latitude: 1.3, longitude: 103.8}});
+  assert.deepEqual(result.fields['openai/locale'], {present: true, value: 'zh-CN'});
+  assert.deepEqual(result.fields['openai/subject'], {present: true, value: null, redacted: true});
+  assert.deepEqual(result.fields['openai/organization'], {present: true, value: null, redacted: true});
+  assert.equal(JSON.stringify(response).includes('should-not-leak'), false);
+  assert.equal(JSON.stringify(response).includes('private-data'), false);
+  assert.equal(JSON.stringify(response).includes('do-not-return'), false);
+  assert.equal(JSON.stringify(response).includes('anonymized-user'), false);
+  assert.equal(JSON.stringify(response).includes('anonymized-org'), false);
+});
+
+test('inspect_client_context reports absent or invalid hints without guessing, and rejects arguments', async () => {
+  const f = await fixture();
+  const absent = (await f.mcp('tools/call', {name: 'inspect_client_context', arguments: {}})).body.result.structuredContent;
+  assert.equal(absent.request_meta_present, false);
+  for (const field of Object.values(absent.fields)) assert.equal(field.present, false);
+  assert.equal(absent.fields['openai/session'].value, null);
+  assert.equal(absent.fields['openai/userLocation'].value, null);
+  const invalid = (await f.mcp('tools/call', {name: 'inspect_client_context', arguments: {},
+    _meta: {'openai/session': 123, 'openai/userLocation': {latitude: 250, longitude: -999}}})).body.result.structuredContent;
+  assert.deepEqual(invalid.fields['openai/session'], {present: true, value: null});
+  assert.deepEqual(invalid.fields['openai/userLocation'], {present: true, value: null});
+  const badArgs = (await f.mcp('tools/call',
+    {name: 'inspect_client_context', arguments: {device_id: 'moon'}})).body.result;
+  assert.equal(badArgs.isError, true);
+  assert.equal(JSON.parse(badArgs.content[0].text).code, 'BAD_REQUEST');
 });

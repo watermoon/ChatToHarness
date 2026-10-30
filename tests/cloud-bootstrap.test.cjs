@@ -56,7 +56,7 @@ test('workers.dev identity is normalized and rejects arbitrary origins or shell 
 test('generated configs bind only read-only tools and keep OAuth KV separate from device hub',()=>{
  const auth=config(source,'watermoon3322',kvId,'auth'),router=config(source,'watermoon3322',kvId,'router');
  assert.equal(auth.kv_namespaces[0].id,kvId);
- assert.deepEqual(router.vars.ALLOWED_TOOLS,'get_harness_status');
+ assert.deepEqual(router.vars.ALLOWED_TOOLS,'get_harness_status,get_tool_result_page,get_tool_result_file');
  assert.equal(router.durable_objects.bindings[0].class_name,'DeviceHub');
  assert.equal(router.services[0].service,'chattoharness-auth');
  assert.equal(auth.vars.OWNER_AUTH_EPOCH,router.vars.OWNER_AUTH_EPOCH);

@@ -18,7 +18,7 @@ binding = "AUTH_SERVER"
 service = "chattoharness-auth"
 
 [vars]
-ALLOWED_TOOLS = "get_harness_status"
+ALLOWED_TOOLS = "get_harness_status,get_tool_result_page,get_tool_result_file"
 MCP_RESOURCE_URL = "https://chattoharness-cloud-router.watermoon3322.workers.dev/mcp"
 OAUTH_ISSUER = "https://chattoharness-auth.watermoon3322.workers.dev"
 OWNER_AUTH_EPOCH = "v1"

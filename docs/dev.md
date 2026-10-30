@@ -1,3 +1,11 @@
+## 2026-10-30 UnifyHarness 缺失分页工具修复（macOS unity.local）
+
+- MCP Gateway 现有 get_tool_result_page/get_tool_result_file 实现和优先 tools/list 顺序确认存在；此前本机运行的是旧版 4e55c3f，且 get_harness_status 仅返回 manager 的 46 基础工具，漏掉网关附加的两项。
+- get_harness_status 的工具目录包含结果分页工具；Cloudflare Worker MCP 直接增加带必填 device_id 的 get_tool_result_page/get_tool_result_file，并同步 Worker 与 macOS Agent 白名单及自动初始化生成配置。
+- 云端代理分页只允许 get_harness_status 的已保存结果，通过本机 MCP Gateway 原生 result store 读取；严禁透过 result_id 访问本地文件、Shell 或第三方 MCP 结果，拒绝非法参数及未经允许的工具。
+- 新增 tests/cloud-result-paging.test.cjs，补充 Worker 工具发现、云端设备选择、分页路由与安全拒绝回归。macOS 全量 npm test 返回 0，专项 40/40 PASS；Mac App 在固定 dist/mac-arm64/ChatToHarness.app 本地构建返回 0。
+- 尚需独立确认云端 Worker 实际部署后的 tools/list 和重新加载的 ChatGPT 插件列表；构建不等于运行中的插件已热更新。
+
 ## 2026-10-30 二次实测：标准 OAuth 回调与 Windows Keyring 幂等修复
 
 - Rocket 打包 Wrangler 4.152 实际执行标准 OAuth，报告已打开默认浏览器，Chrome 显示 Cloudflare Dashboard。未完成账号授权，不能声称已获取 OAuth Token。

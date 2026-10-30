@@ -12,6 +12,42 @@ const rpc = (id, result) => ({jsonrpc: '2.0', id, result});
 const rpcError = (id, code, message) => ({jsonrpc: '2.0', id, error: {code, message}});
 const error = (code, message) => ({ok: false, code, message});
 const textResult = value => ({content: [{type: 'text', text: JSON.stringify(value)}]});
+// Only expose documented, diagnostic OpenAI hints from this particular tools/call.
+// The request's _meta is untrusted client input, not device identification or authorization.
+function inspectClientContext(input) {
+  const meta = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+  const has = key => !!meta && Object.hasOwn(meta, key);
+  const stringField = (key, max) => {
+    const raw = has(key) ? meta[key] : null;
+    const valid = typeof raw === 'string' && raw.length > 0;
+    return {present: has(key), value: valid ? raw.slice(0, max) : null,
+      ...(valid && raw.length > max ? {truncated: true} : {})};
+  };
+  const rawLocation = has('openai/userLocation') ? meta['openai/userLocation'] : null;
+  let location = null;
+  if (rawLocation && typeof rawLocation === 'object' && !Array.isArray(rawLocation)) {
+    const selected = {};
+    for (const key of ['city', 'region', 'country', 'timezone']) {
+      if (typeof rawLocation[key] === 'string' && rawLocation[key].length)
+        selected[key] = rawLocation[key].slice(0, 128);
+    }
+    for (const [key, limit] of [['latitude', 90], ['longitude', 180]]) {
+      if (typeof rawLocation[key] === 'number' && Number.isFinite(rawLocation[key]) &&
+          Math.abs(rawLocation[key]) <= limit) selected[key] = rawLocation[key];
+    }
+    if (Object.keys(selected).length) location = selected;
+  }
+  const fields = {
+    'openai/session': stringField('openai/session', 256),
+    'openai/userAgent': stringField('openai/userAgent', 512),
+    'openai/userLocation': {present: has('openai/userLocation'), value: location},
+    'openai/locale': stringField('openai/locale', 64),
+    'openai/subject': {present: has('openai/subject'), value: null, redacted: true},
+    'openai/organization': {present: has('openai/organization'), value: null, redacted: true}
+  };
+  return {source: 'params._meta', request_meta_present: !!meta, fields,
+    note: 'OpenAI client metadata is optional and unverified. It does not reveal the local IP or reliably identify a device.'};
+}
 
 async function equalSecret(actual, expected) {
   if (typeof actual !== 'string' || typeof expected !== 'string' || expected.length < 24) return false;
@@ -24,7 +60,7 @@ async function equalSecret(actual, expected) {
 }
 function getHub(env) { return env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName('default')); }
 function allowedTools(env) {
-  const raw = String(env.ALLOWED_TOOLS || 'get_harness_status');
+  const raw = String(env.ALLOWED_TOOLS || 'get_harness_status,get_tool_result_page,get_tool_result_file');
   return new Set(raw.split(',').map(x => x.trim()).filter(Boolean));
 }
 const registered = ws => {
@@ -206,6 +242,15 @@ const tools = [
     inputSchema:{type:'object',properties:{},additionalProperties:false}},
   {name: 'list_devices', description: 'List currently connected and authenticated ChatToHarness devices.',
     inputSchema: {type: 'object', additionalProperties: false, properties: {}}},
+  {name: 'inspect_client_context', description: 'Read only optional OpenAI metadata from this MCP request. Diagnostic hints are not proof of client OS, device ID or local IP.',
+    annotations: {readOnlyHint: true, destructiveHint: false, openWorldHint: false},
+    inputSchema: {type: 'object', additionalProperties: false, properties: {}}},
+  {name: 'get_tool_result_page', description: 'Read a previously saved result page on an explicitly selected device without repeating the original tool call.',
+    annotations: {readOnlyHint:true,destructiveHint:false,idempotentHint:true},
+    inputSchema: {type:'object',additionalProperties:false,required:['device_id','result_id'],properties:{device_id:{type:'string'},result_id:{type:'string'},offset:{type:'integer',minimum:0},length:{type:'integer',minimum:4,maximum:4096}}}},
+  {name: 'get_tool_result_file', description: 'Read one deferred result file on an explicitly selected device without repeating the original tool call.',
+    annotations: {readOnlyHint:true,destructiveHint:false,idempotentHint:true},
+    inputSchema: {type:'object',additionalProperties:false,required:['device_id','result_id','file_index'],properties:{device_id:{type:'string'},result_id:{type:'string'},file_index:{type:'integer',minimum:0}}}},
   {name: 'call_device_tool', description: 'Invoke a configured read-only tool on one explicitly selected device. Never silently substitute a different device.',
     inputSchema: {type: 'object', additionalProperties: false, required: ['device_id','tool_name','arguments'],
       properties: {device_id: {type: 'string', description: 'Device ID returned by list_devices'},
@@ -247,14 +292,25 @@ export const authorizedWorker = {
       const upstream = await getHub(env).fetch('https://hub.internal/devices');
       return json(rpc(id, textResult(await upstream.json())));
     }
-    if (name !== 'call_device_tool') return json(rpcError(id, -32602, 'Unknown tool'));
-    if (!args || !ID.test(args.device_id || '') || !ID.test(args.tool_name || '') ||
-        !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))
+    if (name === 'inspect_client_context') {
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length)
+        return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'No arguments accepted'))}));
+      const result = inspectClientContext(message.params?._meta);
+      return json(rpc(id, {...textResult(result), structuredContent: result}));
+    }
+    if (!['call_device_tool','get_tool_result_page','get_tool_result_file'].includes(name))
+      return json(rpcError(id, -32602, 'Unknown tool'));
+    const routed=name==='call_device_tool'?args:{device_id:args?.device_id,tool_name:name,
+      arguments:name==='get_tool_result_page'
+        ? {result_id:args?.result_id,...(args?.offset===undefined?{}:{offset:args.offset}),...(args?.length===undefined?{}:{length:args.length})}
+        : {result_id:args?.result_id,file_index:args?.file_index}};
+    if (!routed || !ID.test(routed.device_id || '') || !ID.test(routed.tool_name || '') ||
+        !routed.arguments || typeof routed.arguments !== 'object' || Array.isArray(routed.arguments))
       return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'Explicit device_id/tool_name/arguments required'))}));
-    if (!allowedTools(env).has(args.tool_name))
+    if (!allowedTools(env).has(routed.tool_name))
       return json(rpc(id, {isError: true, ...textResult(error('TOOL_DENIED', 'Tool not permitted by cloud allowlist'))}));
     const upstream = await getHub(env).fetch(new Request('https://hub.internal/invoke', {method: 'POST',
-      body: JSON.stringify({device_id: args.device_id, tool_name: args.tool_name, arguments: args.arguments}),
+      body: JSON.stringify(routed),
       headers: {'content-type': 'application/json'}}));
     const answer = await upstream.json();
     return json(rpc(id, {...textResult(answer.ok ? answer.result : answer), ...(!answer.ok ? {isError: true} : {})}));

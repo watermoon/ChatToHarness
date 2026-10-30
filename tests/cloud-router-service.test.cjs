@@ -50,6 +50,28 @@ test('the device registers its stable local identity and calls existing manager 
   service.stop();
   assert.equal(service.status().enabled,false);
 });
+test('unified cloud routes saved-result pages and files through the live MCP gateway, not manager.call',async()=>{
+  const {service,calls}=fixture(),seen=[];
+  service.manager.broker={
+    results:{load:async()=>({source:{tool:'get_harness_status'}})},
+    toolCall:async(name,args)=>{
+      seen.push([name,args]);
+      return {structuredContent:{kind:name==='get_tool_result_page'?'harness_result_page':'harness_result_file'}};
+    }
+  };
+  const result_id='result_'+'a'.repeat(32);
+  assert.equal((await service.execute('get_tool_result_page',{result_id,offset:64})).structuredContent.kind,'harness_result_page');
+  assert.equal((await service.execute('get_tool_result_file',{result_id,file_index:1})).structuredContent.kind,'harness_result_file');
+  assert.deepEqual(seen,[
+    ['get_tool_result_page',{result_id,offset:64}],
+    ['get_tool_result_file',{result_id,file_index:1}]
+  ]);
+  assert.deepEqual(calls,[],'reading a saved result must never re-execute the source tool');
+  await assert.rejects(()=>service.execute('get_tool_result_file',null),/CLOUD_ROUTER_INVALID_ARGUMENTS/);
+  delete service.manager.broker.results.load;
+  await assert.rejects(()=>service.execute('get_tool_result_page',{result_id}),/CLOUD_ROUTER_TOOL_UNAVAILABLE/);
+});
+
 test('terminal, filesystem and Computer Use are always denied before existing manager',async()=>{
   const {service,calls}=fixture();
   for(const name of ['start_process','computer_use','write_file','git_status','get_harness_status__anything']){

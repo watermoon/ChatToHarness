@@ -25,7 +25,7 @@ function config(source,s,kv,role,accountId) {
  if(accountId){v.account_id=accountId;v.vars.CF_ACCOUNT_ID=accountId;}
  if(auth){if(kv)v.kv_namespaces=[{binding:'OAUTH_KV',id:kv}];}
  else{
-   v.vars.ALLOWED_TOOLS='get_harness_status';
+   v.vars.ALLOWED_TOOLS='get_harness_status,get_tool_result_page,get_tool_result_file';
    v.durable_objects={bindings:[{name:'DEVICE_HUB',class_name:'DeviceHub'}]};
    v.migrations=[{tag:'v1',new_sqlite_classes:['DeviceHub']}];
    v.services=[{binding:'AUTH_SERVER',service:AUTH}];

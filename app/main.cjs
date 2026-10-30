@@ -378,7 +378,7 @@ else{
         }});
       const services=new HarnessServices({computerUse,home,nodePath:runtime.paths.node,processHost:runtime.paths.processHost,engineEntry:runtime.paths.desktopCommander,configHome:runtime.localHome,versions,history,
         build:require('./build-identity.cjs').captureBuild({root:path.join(__dirname,'..'),resources,packaged:app.isPackaged}),
-        runtime:()=>runtime.status(),catalog:()=>mcpManager?.visibleTools()||[],mcp:()=>mcpManager?.status()||{}});
+        runtime:()=>runtime.status(),catalog:()=>[...(mcpManager?.broker?.results?.tools()||[]),...(mcpManager?.visibleTools()||[])],mcp:()=>mcpManager?.status()||{}});
       mcpManager=new McpManager({settings:mcpSettings,services,enableContent:true,enableProjectGrants:true,nodePath:runtime.paths.node,processHost:runtime.paths.processHost,fetcher:harnessNetwork.fetcher,log,
         builtinFactory:async desktopSettings=>{
           runtime.prepare(desktopSettings);
