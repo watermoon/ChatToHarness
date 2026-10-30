@@ -97,10 +97,14 @@
   byId('cloud-error-confirm')?.addEventListener('click',closeCloudErrorDialog);
   const cloudErrorMessages={
     CLOUD_WRANGLER_FAILED_LOGIN:'未能完成 Cloudflare 登录。请在浏览器中登录 Cloudflare 并批准授权，然后重新点击“自动初始化云端”重试。',
+    CLOUD_STANDARD_OAUTH_FAILED:'Cloudflare 设备授权页面返回 10404，已改用标准浏览器 OAuth，但登录仍未完成。请检查浏览器授权页面及本机 8976 回调端口。',
     CLOUD_LOGIN_REQUIRED:'未能完成 Cloudflare 登录。请在浏览器中登录 Cloudflare 并批准授权，然后重新点击“自动初始化云端”重试。',
     CLOUD_NODE_RUNTIME_MISSING:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
     CLOUD_WRANGLER_RUNTIME_MISSING:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
     CLOUD_KEYRING_RUNTIME_MISSING:'程序包缺少 Windows Cloudflare 授权所需的 Keyring 原生组件，尚未进入浏览器授权流程。这是应用打包错误，请使用修复后的版本。',
+    CLOUD_KEYRING_INSTALL_BUSY:'本机 Keyring 原生组件正在被占用，暂时无法安全替换；请关闭其他正在执行 Cloudflare 授权的进程后重试。',
+    CLOUD_KEYRING_INSTALL_FAILED:'初始化本机 Keyring 组件失败，请检查应用数据目录写入权限，必要时重新启动应用。',
+    CLOUD_KEYRING_INSTALL_VERIFY_FAILED:'Keyring 原生组件完整性校验失败；请使用修复后的完整应用包重新启动。',
     CLOUD_WRANGLER_START_FAILED:'无法启动本机的云端部署工具。请重启 ChatToHarness 后重试；如果问题仍然存在，请重新安装最新版。',
     CLOUD_WRANGLER_TIMEOUT:'本机云端部署工具响应超时。请检查网络连接后重试；如果问题持续，请重启 ChatToHarness。',
     CLOUD_WRANGLER_FAILED_DEPLOY:'Cloudflare 资源部署失败。请确认当前账户具有 Workers 部署权限，并检查网络连接后重试。',

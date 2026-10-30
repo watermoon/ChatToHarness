@@ -399,6 +399,54 @@ test('Wrangler browser device login publishes only short code and clears it afte
  assert.equal(JSON.stringify(result).includes('f'.repeat(64)),false);
 });
 
+test('Cloudflare Device Authorization 10404 falls back to standard browser OAuth with Keyring',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const fetcher=x.bootstrap.fetcher;
+ x.bootstrap.fetcher=async(url,opts)=>url.startsWith('https://dash.cloudflare.com/oauth2/device')?
+  {status:404,json:async()=>({success:false,errors:[{code:10404,message:'No route for that URI'}]})}:
+  fetcher(url,opts);
+ const runner=x.bootstrap.runner;let authFailed=true,standardLogins=0;
+ x.bootstrap.runner=async(node,script,args,opts)=>{
+  if(args[0]==='auth'&&authFailed){authFailed=false;return {code:1,stdout:'',stderr:''};}
+  if(args[0]==='login'){
+    assert.deepEqual(args,['login','--use-keyring']);
+    standardLogins++;
+    return {code:0,stdout:'Successfully logged in'};
+  }
+  return runner(node,script,args,opts);
+ };
+ const result=await x.bootstrap.init({});
+ assert.equal(result.phase,'ready',result.error);
+ assert.equal(standardLogins,1);
+ assert.equal(result.loginCode,'');
+});
+
+test('standard OAuth retains native Keyring errors instead of mislabeling login failure',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const fetcher=x.bootstrap.fetcher;
+ x.bootstrap.fetcher=async(url,opts)=>url.startsWith('https://dash.cloudflare.com/oauth2/device')?
+  {status:404,json:async()=>({success:false,errors:[{code:10404,message:'No route for that URI'}]})}:
+  fetcher(url,opts);
+ x.bootstrap.runner=async(node,script,args)=>{
+  if(args[0]==='auth')return {code:1,stdout:'',stderr:''};
+  if(args[0]==='login')throw Error('CLOUD_KEYRING_INSTALL_BUSY');
+  throw Error('UNEXPECTED_CLI');
+ };
+ const status=await x.bootstrap.init({});
+ assert.equal(status.phase,'failed');
+ assert.equal(status.error,'CLOUD_KEYRING_INSTALL_BUSY');
+});
+
+test('other Device Authorization HTTP errors never trigger standard OAuth fallback',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ x.bootstrap.fetcher=async()=>({status:404,json:async()=>({success:false,errors:[{code:9999,message:'Missing code'}]})});
+ assert.equal(await x.bootstrap.deviceLoginRouteUnavailable(),false);
+ x.bootstrap.fetcher=async()=>({status:403,json:async()=>({success:false,errors:[{code:10404,message:'No route for that URI'}]})});
+ assert.equal(await x.bootstrap.deviceLoginRouteUnavailable(),false);
+ x.bootstrap.fetcher=async()=>{throw Error('network down');};
+ assert.equal(await x.bootstrap.deviceLoginRouteUnavailable(),false);
+});
+
 test('reinitialize redeploys only existing Workers and preserves Owner Key and KV',async(t)=>{
  const fixture=scenario();
  t.after(()=>fs.rmSync(fixture.home,{recursive:true,force:true}));

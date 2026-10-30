@@ -1,3 +1,18 @@
+## 2026-10-30 二次实测：标准 OAuth 回调与 Windows Keyring 幂等修复
+
+- Rocket 打包 Wrangler 4.152 实际执行标准 OAuth，报告已打开默认浏览器，Chrome 显示 Cloudflare Dashboard。未完成账号授权，不能声称已获取 OAuth Token。
+- 同一设备再次登录时，旧代码每次直接复制 Windows Keyring 原生模块，实测 fs.cpSync 返回 EPIPE/errno32。修复为源和目标内容 SHA256 校验：完整且一致时复用，不再覆盖已加载的 .node；首次/修复安装采用 staging 和原子重命名。
+- 增加重复两次无覆盖、损坏修复、缺少依赖失败的专项测试。Keyring 实机重新运行无 EPIPE，标准 OAuth 回调服务已确认监听 IPv6 loopback [::1]:8976；先前仅探测 IPv4 的结果并不足以判定未监听。
+- Keyring 安装失败、占用、完整性异常保留独立错误码和中英日用户提示，不归类为登录失败。
+- 完整 npm test 退出 0，云端专项 34/34 通过；打包应用 UI smoke 退出 0，未进行真实远端授权。构建固定输出 dist/win-unpacked，不创建按功能命名的应用目录。
+- 真实端到端授权仍待用户在浏览器批准，确认 Wrangler 凭据、Cloudflare ready 及设备自动登记，之前不能标记 PASS。
+
+## 2026-10-30 Cloudflare Device OAuth 页面返回 10404 的实网复现与回退
+
+- Rocket 已运行 dac34a8 的 Windows 打包版；Chrome 确实打开 `https://dash.cloudflare.com/oauth2/device`，不是旧包或 Keyring 缺失。2026-10-30 使用无用户令牌、虚构验证码的 GET 实测：`/oauth2/device` 返回 HTTP 404 JSON `code:10404`、`No route for that URI`；带末尾斜线同样 404；标准 OAuth `/oauth2/auth` 和 `/oauth2/authorize` 返回 302。官方 Wrangler Device Authorization 文档仍指向 `/oauth2/device`，故不能未经证据称为代码 URI 拼错；不能确定是 Cloudflare 区域性故障还是服务端变更。
+- 在初始化需登录时，针对 Device 授权页执行无凭据的短超时探测；**仅**检测到 Cloudflare `404+10404` 时，改调用 `wrangler login --use-keyring` 标准浏览器 OAuth（Wrangler 启动浏览器、本机 localhost:8976 完成回调）；其它网络/权限错误不触发回退。标准 OAuth 失败报告专有的中文/英/日诊断，不再建议用户重复刷新已知失败的 Device 页面。
+- 新增 10404 回退和其它 404/403/网络异常不误回退回归。真实标准 OAuth 最终授权及浏览器回调尚未由用户或实际登录验证，不能标记在线登录 PASS。
+
 ## 2026-10-30 Windows Cloudflare Keyring 打包缺失复发：构建阶段阻止再次交付
 
 - Rocket 0.8.1（基线 4e55c3f）确认内置 Wrangler 与 Node 存在，但 `cloud-router/node_modules/@napi-rs/keyring` 和 `keyring-win32-x64-msvc` 缺失；此前构建仅以 Wrangler 主文件存在决定跳过 `npm ci`，导致构建成功而授权入口在 `prepareKeyring` 失败，未触发浏览器授权。2026-10-28 的打包自测仅覆盖 Wrangler CLI 和 IPC 资源路径，没有覆盖 Keyring 原生依赖。

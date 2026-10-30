@@ -122,8 +122,10 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   let page = await launch();
   const initial = await getState();
   await tab(page,'connection');
-  await page.locator('#cloud-setup-copy-key').waitFor({state:'visible'});
+  // Account-based Cloudflare onboarding intentionally hides the legacy Owner Key.
+  await page.locator('#cloud-setup-start').waitFor({state:'visible'});
   assert.equal(await page.locator('#cloud-setup-copy-key').count(),1);
+  assert.equal(await page.locator('#cloud-setup-copy-key').isHidden(),true);
   assert.equal(await page.locator('#cloud-setup-reveal-key').count(),1);
   assert.equal(await page.locator('#cloud-setup-rotate-owner').count(),1);
   assert.equal(await page.locator('#cloud-setup-copy-key').isDisabled(),true);
@@ -183,15 +185,21 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   await page.locator('#cloud-pair-trigger').click();
   assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),true);
   assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
-  await page.locator('#cloud-manual-mode-toggle').click();
-  assert.equal(await page.locator('#cloud-manual-mode-toggle').getAttribute('aria-expanded'),'true');
-  assert.equal(await page.locator('#cloud-manual-pairing').isVisible(),true);
-  const codeWidths=await page.locator('#cloud-pair-code').evaluate(el=>({
-    code:el.getBoundingClientRect().width,
-    container:el.closest('.cloud-pair-fields').getBoundingClientRect().width
-  }));
-  assert.ok(codeWidths.code>=Math.min(270,codeWidths.container-2),
-    'Manual code input must fill its modal: '+JSON.stringify(codeWidths));
+  if(await page.locator('#cloud-manual-mode-toggle').isVisible()) {
+    await page.locator('#cloud-manual-mode-toggle').click();
+    assert.equal(await page.locator('#cloud-manual-mode-toggle').getAttribute('aria-expanded'),'true');
+    assert.equal(await page.locator('#cloud-manual-pairing').isVisible(),true);
+    const codeWidths=await page.locator('#cloud-pair-code').evaluate(el=>({
+      code:el.getBoundingClientRect().width,
+      container:el.closest('.cloud-pair-fields').getBoundingClientRect().width
+    }));
+    assert.ok(codeWidths.code>=Math.min(270,codeWidths.container-2),
+      'Manual code input must fill its modal: '+JSON.stringify(codeWidths));
+  } else {
+    // Account-based onboarding hides the legacy one-time pairing-code mode.
+    assert.equal(await page.locator('#cloud-manual-mode-toggle').isHidden(),true);
+    assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
+  }
   await page.locator('#cloud-pair-dialog-close').click();
   assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),false);
   assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
@@ -296,9 +304,10 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
     await page.locator('#cloud-pair-trigger').click();
     await page.locator('#cloud-manual-mode-toggle').click();
   };
-  await pairInput.fill('');
-  await openManual();
-  await pairButton.click();
+  if(await page.locator('#cloud-manual-mode-toggle').isVisible()){
+    await pairInput.fill('');
+    await openManual();
+    await pairButton.click();
   assert.match(await pairStatus.textContent(),/MCP/);
   assert.equal(await page.locator('#cloud-pair-dialog').evaluate(el=>el.open),false);
   await pairInput.fill('not-a-url');
@@ -312,7 +321,12 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   await pairButton.click();
   assert.match(await pairDialogStatus.textContent(),/43/);
   await page.locator('#cloud-pair-dialog-close').click();
-  assert.equal(await pairCode.inputValue(),'');
+    assert.equal(await pairCode.inputValue(),'');
+  }else{
+    // Account-linked pairing has no manual code form; legacy validation is not applicable.
+    assert.equal(await page.locator('#cloud-manual-mode-toggle').isHidden(),true);
+    assert.equal(await page.locator('#cloud-manual-pairing').isHidden(),true);
+  }
   await pairInput.fill('');
 
   // Manage a real MCP peer through the packaged app before configuring either
@@ -500,8 +514,11 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   });
   await tab(page,'help');
   await page.locator('#check-update').click();
-  await page.waitForFunction(()=>document.getElementById('update-status').textContent.includes('当前没有可用更新'));
-  assert.equal((await getState()).updates.phase,'current');
+  await page.waitForFunction(async()=>{
+    const state=await window.localHarness.getState();
+    return state.updates.phase==='current' &&
+      /当前没有可用更新|No updates are available|利用可能な更新はありません/.test(document.getElementById('update-status').textContent);
+  });
   await page.locator('#auto-check-updates').uncheck();
   await page.waitForFunction(async()=>!(await window.localHarness.getState()).updates.automatic);
   await page.locator('#auto-check-updates').check();

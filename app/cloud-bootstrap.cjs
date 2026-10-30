@@ -153,6 +153,20 @@ class CloudBootstrap {
    this.remoteCheckedAt=Date.now();this.onChange();
    return this.remote;
  }
+ // Cloudflare currently returns API error 10404 for the documented Device
+ // Authorization page on some paths. Probe anonymously before launching a
+ // browser; do not confuse an expired code, login denial or network failure
+ // with this exact route error. No user credential is sent by this probe.
+ async deviceLoginRouteUnavailable(){
+   try{
+     const response=await this.fetcher('https://dash.cloudflare.com/oauth2/device?user_code=AAAAAAAA',
+       {redirect:'manual',signal:AbortSignal.timeout(8000)});
+     if(response?.status!==404)return false;
+     const body=await response.json();
+     return body?.success===false&&Array.isArray(body.errors)&&
+       body.errors.some(e=>Number(e?.code)===10404&&e?.message==='No route for that URI');
+   }catch{return false;}
+ }
  async findOptions(input={},allowLogin=false){
    this.workerInventory=null;this.remote='unchecked';this.remoteCheckedAt=null;
    this.phaseSet('discovering');
@@ -166,13 +180,24 @@ class CloudBootstrap {
      if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
      this.loginCode='';this.loginOutputTail='';
      this.phaseSet('authorize_browser');
-     await this.cli(['login','--device','--use-keyring','--no-browser'],undefined,360000,chunk=>{
-       this.loginOutputTail=(this.loginOutputTail+chunk).slice(-1600);
-       // Parse only the short Wrangler device code, never expose CLI output or tokens.
-       const m=this.loginOutputTail.match(/(?:enter the code\s*:|user_code=)\s*([A-Za-z0-9]{8,12})/i);
-       if(m&&this.loginCode!==m[1]){this.loginCode=m[1];this.onChange();
-         void this.openExternal('https://dash.cloudflare.com/oauth2/device?user_code='+encodeURIComponent(m[1])).catch(()=>{});}
-     });
+     if(await this.deviceLoginRouteUnavailable()){
+       // The documented device page itself responds with Cloudflare 10404.
+       // Use Wrangler's standard PKCE browser flow and localhost callback
+       // instead of opening a known-broken page. Wrangler opens the browser.
+       try{await this.cli(['login','--use-keyring'],undefined,360000);}
+       catch(e){
+         if(/^CLOUD_(?:KEYRING_(?:RUNTIME_MISSING|INSTALL_\w+)|NODE_RUNTIME_MISSING|WRANGLER_(?:RUNTIME_MISSING|START_FAILED|TIMEOUT))$/.test(e?.message||''))throw e;
+         throw Error('CLOUD_STANDARD_OAUTH_FAILED');
+       }
+     }else{
+       await this.cli(['login','--device','--use-keyring','--no-browser'],undefined,360000,chunk=>{
+         this.loginOutputTail=(this.loginOutputTail+chunk).slice(-1600);
+         // Parse only the short Wrangler device code, never expose CLI output or tokens.
+         const m=this.loginOutputTail.match(/(?:enter the code\s*:|user_code=)\s*([A-Za-z0-9]{8,12})/i);
+         if(m&&this.loginCode!==m[1]){this.loginCode=m[1];this.onChange();
+           void this.openExternal('https://dash.cloudflare.com/oauth2/device?user_code='+encodeURIComponent(m[1])).catch(()=>{});}
+       });
+     }
      this.loginCode='';this.loginOutputTail='';
      token=await this.cli(['auth','token','--json']);
    }
