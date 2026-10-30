@@ -407,7 +407,7 @@ else{
         fetcher:harnessNetwork.fetcher,cliEnv:harnessNetwork.cliEnv});
       if(!testMode)cloudRouter.startStored();
 
-      mcpManager.on('state',()=>{const toolsCount=mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});
+      mcpManager.on('state',()=>{const toolsCount=(mcpManager.broker?.results?.tools()?.length||0)+mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});
       mcpManager.on('approval',()=>{if(!quitting&&!installing)show();});
       if(settings.public().keySaved)runtime.update({state:'stopped'});
     }catch(error){fatal=error.name==='SettingsError'?error.message:'应用组件或配置无法读取。请重新安装应用，或通过一键启动入口重新准备组件。';log('startup-failed');}

@@ -1,3 +1,10 @@
+## 2026-10-30 工具计数与 ChatGPT 连接工具快照差异
+
+- unity.local 已运行 769ec712，get_harness_status 的网关全目录为 48 个工具，含 get_tool_result_page/get_tool_result_file，状态 ready；ChatGPT 当前 MacHarness 插件实际可调用仅 46 个，少了以上两个分页工具和 get_execution_summary，而额外存在 computer_use（按 ChatGPT 和服务端实际枚举逐项比对）。
+- App 连接状态原在 app/main.cjs 的 mcpManager state 回调仅使用 visibleTools().length，漏算独立由 Gateway 提供的两个分页工具，导致 renderer 工具摘要持续显示 46。现在取 Gateway result tools 加 manager visibleTools，UI 与 get_harness_status 同一计算口径。
+- ChatGPT 连接工具清单是独立的元数据快照，服务端重启不会自动更新 ChatGPT 已批准的工具定义，需从 Plugins 对应连接刷新工具元数据，并在新对话验收。不能将本机 UI 的 48 等同于当前 ChatGPT 46 个可调用工具。
+- npm test：708 项，692 PASS、16 SKIP、0 FAIL（首次并发执行出现未判明的瞬时失败，完整日志复跑通过）。
+
 ## 2026-10-30 UnifyHarness 缺失分页工具修复（macOS unity.local）
 
 - MCP Gateway 现有 get_tool_result_page/get_tool_result_file 实现和优先 tools/list 顺序确认存在；此前本机运行的是旧版 4e55c3f，且 get_harness_status 仅返回 manager 的 46 基础工具，漏掉网关附加的两项。
