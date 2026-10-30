@@ -1,0 +1,21 @@
+name: MCP paged result tool discovery
+on:
+  push:
+    branches:
+      - fix/issue-tool-result-pages-discovery-macos-20261030
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  result-tool-discovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Validate tools/list first-page recovery and immutable result paging
+        run: node --test tests/mcp-gateway.test.cjs tests/mcp-result-pages.test.cjs
