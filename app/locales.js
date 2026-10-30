@@ -56,6 +56,7 @@
   "已保存": ["Saved", "保存済み"],
   "打开 Cloudflare 授权页 ↗": ["Open Cloudflare authorization ↗", "Cloudflare 認証ページを開く ↗"],
   "Cloudflare 验证码：": ["Cloudflare verification code: ", "Cloudflare 認証コード："],
+  "Cloudflare 授权已完成，可以关闭浏览器授权页面。云端初始化将在 ChatToHarness 中继续。": ["Cloudflare authorization is complete. You can close the browser authorization page. Cloud initialization will continue in ChatToHarness.", "Cloudflare の認証が完了しました。ブラウザーの認証ページを閉じてもかまいません。クラウドの初期化は ChatToHarness で続行されます。"],
   "打开 Cloudflare 控制台 ↗": ["Open Cloudflare dashboard ↗", "Cloudflare ダッシュボードを開く ↗"],
   "自动检测 Cloudflare 环境。需要授权或选择时，会显示具体步骤。": ["Detecting Cloudflare. You will see steps when authorization or selection is needed.", "Cloudflare を検出します。認証や選択が必要な場合は手順を表示します。"],
   "新建 workers.dev 子域名": ["Create workers.dev subdomain", "workers.dev サブドメインを作成"],

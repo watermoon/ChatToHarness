@@ -89,6 +89,7 @@
   };
   window.addEventListener('blur',hideOwnerKey);
   const cloudSetupStatus=byId('cloud-setup-status');
+  const cloudBrowserAuthNotice=byId('cloud-browser-auth-notice');
   const cloudErrorDialog=byId('cloud-error-dialog');
   const cloudErrorTitle=byId('cloud-error-title');
   const cloudErrorMessage=byId('cloud-error-message');
@@ -192,6 +193,10 @@
   const updateCloudSetupStatus=state=>{
     const cloud=state?.cloudBootstrap;
     if(!cloud)return;
+    if(cloudBrowserAuthNotice){
+      cloudBrowserAuthNotice.hidden=cloud.browserAuthComplete!==true;
+      cloudBrowserAuthNotice.textContent=t('Cloudflare 授权已完成，可以关闭浏览器授权页面。云端初始化将在 ChatToHarness 中继续。');
+    }
     const remoteLabel=t(remoteLabels[cloud.remote]||'云端尚未检测');
     cloudSetupStatus.textContent=t(cloud.identityMode==='cloudflare'&&cloud.remote==='deployed'&&['already_deployed','recovery_required'].includes(cloud.phase)?'云端服务已就绪':cloudPhaseLabels[cloud.phase]||'尚未初始化')+
       ' · '+remoteLabel+

@@ -827,6 +827,7 @@ test('cloud setup shows only missing-subdomain input and a concrete action, with
  assert.equal(f.node('cloud-account-picker').hidden,true);
  assert.equal(f.node('cloud-kv-picker').hidden,true);
  assert.equal(f.node('cloud-setup-start').disabled,false);
+ assert.equal(f.node('cloud-browser-auth-notice').hidden,true,'no unverified authorization reminder');
  assert.match(f.node('cloud-setup-guidance').textContent,/workers.dev 子域名/);
  assert.equal(starts,0,'discovery should not mutate Cloudflare');
  state.cloudBootstrap.phase='authorize_browser';
@@ -839,9 +840,15 @@ test('cloud setup shows only missing-subdomain input and a concrete action, with
  assert.equal(f.node('cloud-login-open').hidden,false);
  state.cloudBootstrap.phase='ready';state.cloudBootstrap.remote='deployed';state.cloudBootstrap.hasOwnerKey=true;
  state.cloudBootstrap.guidance={code:'ready',step:0,totalSteps:6};state.cloudBootstrap.loginCode='';
+ state.cloudBootstrap.browserAuthComplete=true;
  f.update(state);
+ assert.equal(f.node('cloud-browser-auth-notice').hidden,false);
+ assert.match(f.node('cloud-browser-auth-notice').textContent,/可以关闭浏览器授权页面/);
  assert.equal(f.node('cloud-login-code').hidden,true);
  assert.equal(f.node('cloud-login-code').textContent,'');
+ state.cloudBootstrap.browserAuthComplete=false;
+ f.update(state);
+ assert.equal(f.node('cloud-browser-auth-notice').hidden,true,'new or failed auth must hide prior reminder');
 });
 
 test('pair dialog is available only before pairing and manual code is shown on demand',async()=>{

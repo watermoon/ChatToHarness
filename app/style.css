@@ -212,6 +212,8 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
 @media(max-width:680px){.cloud-owner-bar{align-items:stretch}.cloud-owner-bar #cloud-owner-key-status{min-width:100%;flex-basis:100%}}
 
 /* Compact, contextual cloud-setup guidance; long tutorials live in Help. */
+.cloud-browser-auth-notice{margin:8px 0 0;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;font-size:12px;line-height:1.5;color:var(--text)}
+.cloud-browser-auth-notice[hidden]{display:none!important}
 .cloud-setup-guidance{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .cloud-setup-guidance span{flex:1;min-width:220px;font-size:11px;line-height:1.6;color:var(--muted)}
 .cloud-setup-guidance button{white-space:nowrap}

@@ -396,7 +396,38 @@ test('Wrangler browser device login publishes only short code and clears it afte
  assert.equal(seen,'jPqK6Qvs');
  assert.deepEqual(opened,['https://dash.cloudflare.com/oauth2/device?user_code=jPqK6Qvs']);
  assert.equal(result.loginCode,'');
+ assert.equal(result.browserAuthComplete,true,'successful token verification permits closing browser');
  assert.equal(JSON.stringify(result).includes('f'.repeat(64)),false);
+});
+
+test('browser close reminder never appears for cancelled authorization or failed token verification',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ let authCalls=0;
+ x.bootstrap.runner=async(node,script,args)=>{
+   if(args[0]==='auth'){authCalls++;return {code:1,stdout:'',stderr:''};}
+   if(args[0]==='login')return {code:0,stdout:'Successfully logged in'};
+   throw Error('UNEXPECTED_CLI');
+ };
+ const result=await x.bootstrap.init({});
+ assert.equal(result.phase,'failed');
+ assert.equal(authCalls,2,'token must be checked both before and after browser login');
+ assert.equal(result.browserAuthComplete,false,'CLI login exit alone is not proof of authorization');
+ const y=scenario();t.after(()=>fs.rmSync(y.home,{recursive:true,force:true}));
+ y.bootstrap.runner=async(node,script,args)=>{
+   if(args[0]==='auth')return {code:1,stdout:'',stderr:''};
+   if(args[0]==='login')return {code:1,stdout:'',stderr:''};
+   throw Error('UNEXPECTED_CLI');
+ };
+ const cancelled=await y.bootstrap.init({});
+ assert.equal(cancelled.phase,'failed');
+ assert.equal(cancelled.browserAuthComplete,false);
+});
+
+test('existing Cloudflare authorization never falsely prompts to close a browser tab',async t=>{
+ const x=scenario();t.after(()=>fs.rmSync(x.home,{recursive:true,force:true}));
+ const result=await x.bootstrap.init({});
+ assert.equal(result.phase,'ready',result.error);
+ assert.equal(result.browserAuthComplete,false);
 });
 
 test('Cloudflare Device Authorization 10404 falls back to standard browser OAuth with Keyring',async t=>{
@@ -419,6 +450,7 @@ test('Cloudflare Device Authorization 10404 falls back to standard browser OAuth
  assert.equal(result.phase,'ready',result.error);
  assert.equal(standardLogins,1);
  assert.equal(result.loginCode,'');
+ assert.equal(result.browserAuthComplete,true,'standard OAuth success should show close-browser reminder');
 });
 
 test('standard OAuth retains native Keyring errors instead of mislabeling login failure',async t=>{

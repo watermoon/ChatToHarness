@@ -63,6 +63,7 @@ class CloudBootstrap {
   this.remote='unchecked';this.remoteCheckedAt=null;this.workerInventory=null;
   this.accountChoices=[];this.kvChoices=[];this.discoveredAccountId='';this.discoveredSubdomain='';
   this.selectedKvId='';this.suggestedSubdomain='';this.loginCode='';this.loginOutputTail='';
+  this.browserAuthComplete=false;
   this.record=this.read();if(this.record?.complete)this.phase='checking';
  }
  read(){
@@ -80,6 +81,7 @@ class CloudBootstrap {
   accountOptions:this.accountChoices,kvOptions:this.kvChoices,
   suggestedSubdomain:this.suggestedSubdomain,
   loginCode:this.phase==='authorize_browser'?this.loginCode:'',
+  browserAuthComplete:this.browserAuthComplete===true,
   guidance:require('./cloud-setup-guidance.cjs').cloudSetupGuidance({
     phase:this.phase,remote:this.remote,error:this.error,
     hasOwnerKey:Boolean(this.record?.encryptedKey)
@@ -168,6 +170,7 @@ class CloudBootstrap {
    }catch{return false;}
  }
  async findOptions(input={},allowLogin=false){
+   this.browserAuthComplete=false;
    this.workerInventory=null;this.remote='unchecked';this.remoteCheckedAt=null;
    this.phaseSet('discovering');
    let token;
@@ -200,6 +203,9 @@ class CloudBootstrap {
      }
      this.loginCode='';this.loginOutputTail='';
      token=await this.cli(['auth','token','--json']);
+     // Only signal completion after Wrangler can read a valid login token.
+     // This does not imply Workers deployment or device pairing succeeded.
+     this.browserAuthComplete=true;this.onChange();
    }
    const chosenAccount=input.accountId||this.record?.accountId||'';
    const chosenKv=(this.record?.accountId===chosenAccount?this.record?.kvId:'')||'';

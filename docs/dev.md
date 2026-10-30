@@ -4,6 +4,11 @@
 - App 连接状态原在 app/main.cjs 的 mcpManager state 回调仅使用 visibleTools().length，漏算独立由 Gateway 提供的两个分页工具，导致 renderer 工具摘要持续显示 46。现在取 Gateway result tools 加 manager visibleTools，UI 与 get_harness_status 同一计算口径。
 - ChatGPT 连接工具清单是独立的元数据快照，服务端重启不会自动更新 ChatGPT 已批准的工具定义，需从 Plugins 对应连接刷新工具元数据，并在新对话验收。不能将本机 UI 的 48 等同于当前 ChatGPT 46 个可调用工具。
 - npm test：708 项，692 PASS、16 SKIP、0 FAIL（首次并发执行出现未判明的瞬时失败，完整日志复跑通过）。
+## 2026-10-30 Cloudflare 浏览器授权完成后显示关闭页面提醒
+
+- 云端初始化登录仅在 Wrangler 完成浏览器授权、且随后 `auth token --json` 再次成功后，设置本次会话临时 `browserAuthComplete` 状态；尚未授权、已登录但没有新打开浏览器、取消授权或令牌核验失败时均不显示。
+- ChatToHarness 云端初始化区域以非阻塞状态提示展示“Cloudflare 授权已完成，可以关闭浏览器授权页面。云端初始化将在 ChatToHarness 中继续。”，中英日多语言齐备；提示在新一轮发现/授权时清除，避免误将浏览器授权视作 Worker 部署完成。
+- 相关回归覆盖 Device OAuth、标准 OAuth、授权取消、Token 核验失败、已登录无需重新授权、UI 显示/隐藏；固定 Windows 构建目录 `dist/win-unpacked`。
 
 ## 2026-10-30 UnifyHarness 缺失分页工具修复（macOS unity.local）
 
