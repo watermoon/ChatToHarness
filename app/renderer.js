@@ -229,8 +229,13 @@
     cloudSetupReinitialize.disabled=Boolean(cloud.busy)||remote!=='deployed'||(!cloud.hasOwnerKey&&cloud.identityMode!=='cloudflare');
     if(cloudResetDialog.open && cloud.busy)
       cloudResetProgress.textContent=t(cloudPhaseLabels[cloud.phase]||'正在彻底重置云端…');
+    cloudResetTrigger.hidden=false;
     cloudResetTrigger.disabled=Boolean(cloud.busy)||!cloud.hasOwnerKey||
       (remote!=='deployed'&&!cloud.resetInProgress);
+    cloudResetTrigger.title=t(cloud.busy?'云端操作正在进行中，暂时无法彻底重置':
+      !cloud.hasOwnerKey?'本机没有已保存的 Owner Key，无法安全确认删除 Cloudflare 部署':
+      remote!=='deployed'&&!cloud.resetInProgress?'请先验证云端部署状态，确认后才可执行彻底重置':
+      '彻底删除 ChatToHarness 云端 Worker、OAuth KV 和设备绑定记录');
     cloudOwnerKeyStatus.textContent=t(cloud.hasOwnerKey?'已保存':'未保存');
     cloudOwnerKeyCopy.disabled=!cloud.hasOwnerKey;
     cloudOwnerKeyRevealButton.disabled=!cloud.hasOwnerKey;

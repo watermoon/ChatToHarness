@@ -1,3 +1,9 @@
+## 2026-10-30 恢复 Cloudflare 部署清理按钮
+
+- 源码 `app/index.html` 的“高级管理 → 彻底重置云端”被硬编码 `hidden`，`renderer.js` 只设置 `disabled` 从不取消隐藏，因此即使本地有 Owner Key 也看不到入口；并非删除功能移除。
+- 现恢复入口显示；无本机 Owner Key、未验证远端部署、正在进行云端操作时保留禁用及解释，不绕过底层 Cloudflare 目标验证、Owner Key、KV 共享检测和明确输入 `RESET CHATTOHARNESS` 的确认保护。
+- 测试验证按钮实际可见、根据授权状态启用/禁用、缺少 Owner Key 给出原因，以及现有清理功能测试；不实际删除云端资源。正在运行的安装包需更新后 UI 才生效。
+
 ## 2026-10-30 工具计数与 ChatGPT 连接工具快照差异
 
 - unity.local 已运行 769ec712，get_harness_status 的网关全目录为 48 个工具，含 get_tool_result_page/get_tool_result_file，状态 ready；ChatGPT 当前 MacHarness 插件实际可调用仅 46 个，少了以上两个分页工具和 get_execution_summary，而额外存在 computer_use（按 ChatGPT 和服务端实际枚举逐项比对）。

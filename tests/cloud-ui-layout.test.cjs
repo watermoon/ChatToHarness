@@ -121,6 +121,7 @@ test('advanced cloud reset is explicit and inline roster/control placement remai
  for(const id of ['cloud-setup-reset-trigger','cloud-reset-dialog','cloud-reset-confirm',
    'cloud-reset-submit','cloud-reset-progress'])assert.ok(html.includes('id="'+id+'"'));
  assert.match(html,/id="cloud-reset-dialog" class="cloud-pair-dialog"/);
+ assert.doesNotMatch(html,/id="cloud-setup-reset-trigger"\s+hidden\b/,'advanced reset entry must remain visible');
  assert.match(html,/id="cloud-reset-submit"[^>]*disabled/);
  assert.match(html,/id="cloud-reset-confirm"/);
  assert.match(html,/id="cloud-setup-copy-key"/);

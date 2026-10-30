@@ -948,12 +948,15 @@ test('cloud reset stays disabled until managed and requires typed consent',async
    busy:false,accountOptions:[],kvOptions:[]};
  const f=await rendererFixture(state);
  f.update(state);
+ assert.equal(f.node('cloud-setup-reset-trigger').hidden,false);
  assert.equal(f.node('cloud-setup-reset-trigger').disabled,false);
  await f.node('cloud-setup-reset-trigger').emit('click');
  assert.equal(f.node('cloud-reset-dialog').open,true);
  assert.equal(f.node('cloud-reset-submit').disabled,true);
  state.cloudBootstrap.hasOwnerKey=false;f.update(state);
+ assert.equal(f.node('cloud-setup-reset-trigger').hidden,false);
  assert.equal(f.node('cloud-setup-reset-trigger').disabled,true);
+ assert.match(f.node('cloud-setup-reset-trigger').title,/Owner Key/);
  state.cloudBootstrap.hasOwnerKey=true;state.cloudBootstrap.remote='partial';
  state.cloudBootstrap.resetInProgress=true;f.update(state);
  assert.equal(f.node('cloud-setup-reset-trigger').disabled,false);
