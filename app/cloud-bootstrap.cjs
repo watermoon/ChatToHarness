@@ -104,12 +104,16 @@ class CloudBootstrap {
   const nodePresent=typeof this.nodePath==='string'&&fs.existsSync(this.nodePath);
   const wrangler=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
   const wranglerPresent=fs.existsSync(wrangler);
-  return {ready:nodePresent&&wranglerPresent,nodePresent,wranglerPresent};
+  const keyringPresent=process.platform!=='win32'||
+    ['keyring',`keyring-win32-${process.arch}-msvc`].every(name=>
+      fs.existsSync(path.join(this.sourceDir,'node_modules','@napi-rs',name,'package.json')));
+  return {ready:nodePresent&&wranglerPresent&&keyringPresent,nodePresent,wranglerPresent,keyringPresent};
  }
  async cli(args,input,timeoutMs,onOutput){
   const check=this.runtimeCheck();
   if(!check.nodePresent)throw Error('CLOUD_NODE_RUNTIME_MISSING');
   if(!check.wranglerPresent)throw Error('CLOUD_WRANGLER_RUNTIME_MISSING');
+  if(args[0]==='login'&&!check.keyringPresent)throw Error('CLOUD_KEYRING_RUNTIME_MISSING');
   if(args[0]==='login'&&this.runner===run)require('./cloud-keyring.cjs').prepareKeyring(this.sourceDir);
   const script=path.join(this.sourceDir,'node_modules/wrangler/bin/wrangler.js');
   const res=await this.runner(this.nodePath,script,args,{cwd:this.sourceDir,input,timeoutMs,onOutput,env:await this.cliEnv()});
@@ -158,7 +162,7 @@ class CloudBootstrap {
      // Never confuse missing/unusable packaged resources with a login problem.
      const code=String(error?.message||'');
      if(code==='CLOUD_NODE_RUNTIME_MISSING'||code==='CLOUD_WRANGLER_RUNTIME_MISSING'
-       ||code==='CLOUD_WRANGLER_START_FAILED'||code==='CLOUD_WRANGLER_TIMEOUT')throw error;
+       ||code==='CLOUD_KEYRING_RUNTIME_MISSING'||code==='CLOUD_WRANGLER_START_FAILED'||code==='CLOUD_WRANGLER_TIMEOUT')throw error;
      if(!allowLogin)throw Error('CLOUD_LOGIN_REQUIRED');
      this.loginCode='';this.loginOutputTail='';
      this.phaseSet('authorize_browser');

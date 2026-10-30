@@ -71,12 +71,20 @@ function main() {
   const config = signingConfig(process.platform, process.env);
   // Cloudflare CLI is bundled into the product, never required on the end-user's PATH.
   // Builder runs this on each target OS so Wrangler's native dependencies match the target.
-  const cloudCli=path.join(root,'cloud-router','node_modules','wrangler','bin','wrangler.js');
-  if(!fs.existsSync(cloudCli)){
+  const cloudModules=path.join(root,'cloud-router','node_modules');
+  const cloudRequired=[
+    path.join(cloudModules,'wrangler','bin','wrangler.js'),
+    path.join(cloudModules,'@napi-rs','keyring','package.json'),
+    ...(process.platform==='win32'||process.platform==='darwin'?
+      [path.join(cloudModules,'@napi-rs',`keyring-${process.platform==='win32'?'win32-'+process.arch+'-msvc':'darwin-'+process.arch}`,'package.json')]:[])
+  ];
+  if(cloudRequired.some(file=>!fs.existsSync(file))){
     const npm=process.platform==='win32'?'npm.cmd':'npm';
-    const prepared=spawnSync(npm,['ci','--prefix','cloud-router'],{cwd:root,stdio:'inherit',windowsHide:true});
+    const prepared=spawnSync(npm,['ci','--prefix','cloud-router','--include=optional'],{cwd:root,stdio:'inherit',windowsHide:true});
     if(prepared.error||prepared.status!==0)throw new Error('Cloudflare bootstrap dependency bundle could not be prepared.');
   }
+  for(const file of cloudRequired)if(!fs.existsSync(file))
+    throw new Error('Cloudflare bootstrap dependency missing: '+path.relative(root,file));
   run(path.join(__dirname, 'prepare-resources.cjs'));
   verifyResources(path.join(root, 'resources'));
   require('../app/build-identity.cjs').writeBuildInfo(root, path.join(root, 'resources'));
@@ -99,8 +107,31 @@ function main() {
   // The cloud bootstrap must work without a pre-installed Node.js or Wrangler.
   for(const file of ['cloud-router/node_modules/wrangler/bin/wrangler.js',
     'cloud-router/node_modules/@cloudflare/workers-oauth-provider/package.json',
+    'cloud-router/node_modules/@napi-rs/keyring/package.json',
+    ...(process.platform==='win32'||process.platform==='darwin'?
+      [`cloud-router/node_modules/@napi-rs/keyring-${process.platform==='win32'?'win32-'+process.arch+'-msvc':'darwin-'+process.arch}/package.json`]:[]),
     'cloud-router/auth-server/index.mjs','cloud-router/src/secure-worker.mjs']){
     if(!fs.existsSync(path.join(resources,file)))throw new Error('Cloud bootstrap resource missing: '+file);
+  }
+
+  // Validate the actual shipped Windows OAuth runtime, not just file names.
+  // This gate runs for every local build and for release CI; incomplete native
+  // dependencies must fail packaging rather than reaching end users.
+  if (process.platform === 'win32') {
+    const node = path.join(resources, 'node', versions.forPlatform().node.binary);
+    const keyring = path.join(resources, 'cloud-router', 'node_modules', '@napi-rs', 'keyring');
+    const wrangler = path.join(resources, 'cloud-router', 'node_modules', 'wrangler', 'bin', 'wrangler.js');
+    const check = (args, label) => {
+      const result = spawnSync(node, args, { cwd: path.dirname(wrangler), windowsHide: true,
+        encoding: 'utf8', timeout: 30000 });
+      if (result.error || result.status !== 0) throw new Error(
+        `Packaged Cloudflare ${label} self-test failed: ${result.error?.message || result.stderr?.slice(-500) || result.status}`);
+      return result.stdout;
+    };
+    check(['-e', 'require(process.argv[1])', keyring], 'native Keyring load');
+    const help = check([wrangler, 'login', '--help'], 'Wrangler OAuth command');
+    if (!help.includes('--device') || !help.includes('--use-keyring'))
+      throw new Error('Packaged Wrangler is missing required device OAuth/Keyring flags');
   }
 
   if (shouldVerifyMacSignature(process.platform, config.signed)) {

@@ -1,3 +1,10 @@
+## 2026-10-30 Windows Cloudflare Keyring 打包缺失复发：构建阶段阻止再次交付
+
+- Rocket 0.8.1（基线 4e55c3f）确认内置 Wrangler 与 Node 存在，但 `cloud-router/node_modules/@napi-rs/keyring` 和 `keyring-win32-x64-msvc` 缺失；此前构建仅以 Wrangler 主文件存在决定跳过 `npm ci`，导致构建成功而授权入口在 `prepareKeyring` 失败，未触发浏览器授权。2026-10-28 的打包自测仅覆盖 Wrangler CLI 和 IPC 资源路径，没有覆盖 Keyring 原生依赖。
+- 构建前检查 Wrangler、Keyring 主包及目标系统原生包；缺失时重新执行 `npm ci --prefix cloud-router --include=optional`，仍缺失立即失败。构建后再次检查打包资源，Windows 用内置 Node 实际加载 Keyring 并验证 Wrangler `login --help` 支持 `--device` / `--use-keyring`；任何失败均使本地构建与发布 CI 构建失败。
+- 初始化前检查 Windows Keyring，缺失时明确报 `CLOUD_KEYRING_RUNTIME_MISSING`，不可当作网页登录失败；错误弹窗提供准确原因与中文、英文、日文提示。增加缺少 Keyring 时不运行登录命令的回归。
+- Rocket `npm test`：696 项，677 PASS、19 SKIP、0 FAIL；免安装 Windows 构建成功（使用独立目录避免覆盖正在运行的旧程序），内置 Keyring 实际加载 PASS。尚未以真实 Cloudflare 账户完成浏览器 OAuth 端到端授权，因此不能宣称在线授权验收完成。
+
 ## 2026-10-29 实际自动登记失败修复与用户实测成功
 
 - 真实 Worker 日志定位：账户验证函数使用 redirect=error，Cloudflare edge fetch 仅支持 follow/manual，直接抛 TypeError，未发起账户权限验证。客户端将该失败吞并为 CLOUD_ACCOUNT_ENROLL_FAILED。

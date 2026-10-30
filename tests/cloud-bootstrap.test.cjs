@@ -13,6 +13,11 @@ function scenario() {
  const wrangler=path.join(sourceDir,'node_modules/wrangler/bin/wrangler.js');
  fs.mkdirSync(path.dirname(wrangler),{recursive:true});
  fs.writeFileSync(wrangler,'// test fixture only\n');
+ for(const name of ['keyring',`keyring-win32-${process.arch}-msvc`]){
+  const manifest=path.join(sourceDir,'node_modules','@napi-rs',name,'package.json');
+  fs.mkdirSync(path.dirname(manifest),{recursive:true});
+  fs.writeFileSync(manifest,'{}');
+ }
  const calls=[],inputs=[],fetchCalls=[];
  let deployed=false;
  const runner=async(node,script,args,opts)=>{
@@ -165,20 +170,30 @@ test('unverified stored owner key cannot silently adopt an existing remote deplo
 test('cloud initialization self-check distinguishes absent Node and Wrangler without attempting login or deployment',async t=>{
  const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
  assert.deepEqual(s.bootstrap.runtimeCheck(),
-   {ready:true,nodePresent:true,wranglerPresent:true});
+   {ready:true,nodePresent:true,wranglerPresent:true,keyringPresent:true});
  const realNode=s.bootstrap.nodePath;
  s.bootstrap.nodePath=path.join(s.home,'missing-node');
  assert.deepEqual(s.bootstrap.runtimeCheck(),
-   {ready:false,nodePresent:false,wranglerPresent:true});
+   {ready:false,nodePresent:false,wranglerPresent:true,keyringPresent:true});
  assert.equal((await s.bootstrap.init({})).error,'CLOUD_NODE_RUNTIME_MISSING');
  assert.equal(s.calls.length,0);
  s.bootstrap.nodePath=realNode;
  fs.rmSync(path.join(s.sourceDir,'node_modules/wrangler/bin/wrangler.js'));
  assert.deepEqual(s.bootstrap.runtimeCheck(),
-   {ready:false,nodePresent:true,wranglerPresent:false});
+   {ready:false,nodePresent:true,wranglerPresent:false,keyringPresent:true});
  assert.equal((await s.bootstrap.init({})).error,'CLOUD_WRANGLER_RUNTIME_MISSING');
  assert.equal(s.calls.length,0);
  assert.equal((await s.bootstrap.preview()).error,'CLOUD_WRANGLER_RUNTIME_MISSING');
+});
+
+test('Windows cloud login fails locally when native Keyring is absent',async t=>{
+ const s=scenario();t.after(()=>fs.rmSync(s.home,{recursive:true,force:true}));
+ if(process.platform!=='win32')return;
+ fs.rmSync(path.join(s.sourceDir,'node_modules','@napi-rs',`keyring-win32-${process.arch}-msvc`),{recursive:true,force:true});
+ assert.equal(s.bootstrap.runtimeCheck().ready,false);
+ assert.equal(s.bootstrap.runtimeCheck().keyringPresent,false);
+ await assert.rejects(()=>s.bootstrap.cli(['login']),/CLOUD_KEYRING_RUNTIME_MISSING/);
+ assert.equal(s.calls.length,0);
 });
 
 test('owner key rotation on a manually deployed remote keeps Workers, KV and devices untouched',async(t)=>{
