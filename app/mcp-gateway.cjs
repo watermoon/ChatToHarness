@@ -168,7 +168,11 @@ class McpGateway {
         try{
           const result=this.manager.listTools(request.params?.cursor);
           this.manager.log?.('mcp-session',{session,phase:'tools-listed',toolsVersion:this.manager.toolsVersion,count:result.tools.length,hasNextPage:Boolean(result.nextCursor)});
-          return {...result,tools:[...result.tools.map(decorateTool),...(!request.params?.cursor?this.results.tools():[])]};
+          // Put paging/recovery tools before the growing ordinary tool list.
+          // Some hosted connector snapshots keep only an initial tool prefix;
+          // appending these helpers left large project-guidance results unreadable.
+          const recovery=request.params?.cursor?[]:this.results.tools();
+          return {...result,tools:[...recovery,...result.tools.map(decorateTool)]};
         }catch{throw new McpError(ErrorCode.InvalidParams,'MCP_CURSOR_EXPIRED');}
       });
       server.setRequestHandler(CallToolRequestSchema,(request,extra)=>{
