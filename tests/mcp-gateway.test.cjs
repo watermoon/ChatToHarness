@@ -140,6 +140,32 @@ test('private gateway authenticates before MCP parsing and never exposes managem
   }
 });
 
+test('result recovery tools lead a large first tool page and remain available to prefix-capped connectors', {timeout:15000}, async t=>{
+  const {manager,environment}=await fixture(t);
+  manager.tools=Array.from({length:70},(_,index)=>({...TEST_TOOL,name:'fixture_tool_'+String(index).padStart(2,'0')}));
+  manager.listTools=cursor=>{
+    const offset=cursor===undefined?0:Number(cursor);
+    assert.ok(Number.isInteger(offset)&&offset>=0&&offset<manager.tools.length);
+    const next=offset+44;
+    return {tools:structuredClone(manager.tools.slice(offset,next)),
+      ...(next<manager.tools.length?{nextCursor:String(next)}:{})};
+  };
+  const connection=await peer(t,environment);
+  connection.send({jsonrpc:'2.0',id:51,method:'tools/list'});
+  const first=(await connection.waitFor(message=>message.id===51)).result;
+  assert.equal(first.tools.length,46,'two recovery tools plus a page of 44 normal tools');
+  assert.deepEqual(first.tools.slice(0,2),deliveryTools(),
+    'critical result paging is in the prefix even if a host snapshots only 46 tools');
+  assert.equal(first.tools[2].name,'fixture_tool_00');
+  assert.equal(first.nextCursor,'44');
+  connection.send({jsonrpc:'2.0',id:52,method:'tools/list',params:{cursor:first.nextCursor}});
+  const second=(await connection.waitFor(message=>message.id===52)).result;
+  assert.equal(second.tools.length,26);
+  assert.equal(second.tools[0].name,'fixture_tool_44');
+  assert.equal(second.nextCursor,undefined);
+  assert.equal(new Set([...first.tools,...second.tools].map(tool=>tool.name)).size,72);
+});
+
 test('real SDK client preserves arguments and defers native files without rerunning the source tool', { timeout: 15000 }, async t => {
   const { manager, environment } = await fixture(t);
   const expected = {
@@ -159,7 +185,7 @@ test('real SDK client preserves arguments and defers native files without rerunn
   const client = new Client({ name: 'upstream-test', version: '1.0.0' }, { capabilities: {} });
   t.after(() => client.close());
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools, [TEST_TOOL,...deliveryTools()]);
+  assert.deepEqual((await client.listTools()).tools, [...deliveryTools(),TEST_TOOL]);
   const args = { label: '中文', unchangedPath: '../literal/$HOME', nested: { project_context: false, newline: 'a\nb' }, zero: 0 };
   const result = await client.callTool({ name: TEST_TOOL.name, arguments: args });
   assert.deepEqual(manager.calls[0].args, args);
@@ -239,7 +265,7 @@ test('SDK output validation accepts original strict schemas and complete saved p
   const client=new Client({name:'paged-schema-test',version:'1'},{capabilities:{}});
   t.after(()=>client.close());
   await client.connect(new StdioClientTransport({command:process.execPath,args:[relay],env:environment,stderr:'pipe'}));
-  assert.deepEqual((await client.listTools()).tools,[decorateTool(strict),...deliveryTools()]);
+  assert.deepEqual((await client.listTools()).tools,[...deliveryTools(),decorateTool(strict)]);
   let result=await client.callTool({name:strict.name,arguments:{unchanged:true}});
   const first=result,text=[];
   for(;;){
@@ -335,7 +361,7 @@ test('gateway immediate start-stop and subsequent restart leave no old listener 
   const oldEnvironment = gateway.environment();
   const connection = await peer(t, oldEnvironment);
   connection.send({ jsonrpc: '2.0', id: 20, method: 'tools/list' });
-  assert.deepEqual((await connection.waitFor(message => message.id === 20)).result.tools, [TEST_TOOL,...deliveryTools()]);
+  assert.deepEqual((await connection.waitFor(message => message.id === 20)).result.tools, [...deliveryTools(),TEST_TOOL]);
   await gateway.stop();
   assert.equal(gateway.sessions.size, 0);
   assert.equal(gateway.sockets.size, 0);
