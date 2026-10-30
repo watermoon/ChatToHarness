@@ -1,8 +1,23 @@
 name: MCP paged result tool discovery
 on:
+  pull_request:
+    branches:
+      - feat/cloudflare-multi-device-router
+    paths:
+      - app/mcp-gateway.cjs
+      - app/mcp-result-pages.cjs
+      - tests/mcp-gateway.test.cjs
+      - tests/mcp-result-pages.test.cjs
+      - .github/workflows/paged-result-tools-smoke.yml
   push:
     branches:
-      - fix/issue-tool-result-pages-discovery-macos-20261030
+      - feat/cloudflare-multi-device-router
+    paths:
+      - app/mcp-gateway.cjs
+      - app/mcp-result-pages.cjs
+      - tests/mcp-gateway.test.cjs
+      - tests/mcp-result-pages.test.cjs
+      - .github/workflows/paged-result-tools-smoke.yml
   workflow_dispatch:
 permissions:
   contents: read
