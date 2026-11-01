@@ -29,7 +29,15 @@ jobs:
       - name: Validate runner architecture
         run: |
           node -e "if(process.platform==='darwin' ? process.arch!=='arm64' : process.arch!=='x64')process.exit(1)"
+      - name: Select Xcode 16.2 for macOS 14-compatible helper
+        if: runner.os == 'macOS'
+        run: |
+          test -d /Applications/Xcode_16.2.app/Contents/Developer
+          echo "DEVELOPER_DIR=/Applications/Xcode_16.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR=/Applications/Xcode_16.2.app/Contents/Developer xcodebuild -version
       - run: npm ci --no-audit --no-fund
+      - name: Install Cloud Router dependencies for app tests
+        run: npm ci --prefix cloud-router --include=optional --no-audit --no-fund
       - run: node scripts/release.cjs check
       - name: Build native Computer Use helper for tests
         run: npm run build:computer-use

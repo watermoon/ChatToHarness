@@ -1,6 +1,6 @@
 ## 2026-11-01 UnifyHarness 统一工具目录与 Windows 硬件枚举（Issue #5 / #6）
 
-- 当前分支：`feat/cloudflare-multi-device-router`；最新实现提交：`73855c670b69f73b43f11dce356102f655a62644`（已推送）。`docs/dev.md` 状态更新待提交。PR #7 已建立并 ready for review，base=`main`；最新 head 的 Website build 已通过（PR 场景未执行 deploy），Application checks（macOS 15、Windows 2025）仍在运行。
+- 当前分支：`feat/cloudflare-multi-device-router`；最新功能提交：`73855c670b69f73b43f11dce356102f655a62644`（已推送）。PR #7 已建立并 ready for review，base=`main`。该 head 的 Website build 通过；macOS CI 因默认 Xcode 引入未批准的 `libswiftDataDetection.dylib` 失败，Windows CI 因未安装 `cloud-router/node_modules/undici` 失败。对应修复分别跟踪 Issue #8/#9，已加入当前工作区，待推送触发复验。
 - 采用 B 方案：本地 `McpManager.visibleTools()` 与结果分页工具共同生成设备目录；仅发布 `readOnlyHint=true`、`destructiveHint=false`、`openWorldHint=false` 且通过本地 denylist 的工具。Worker 按设备存储目录，`list_device_tools` 提供版本和分页，`call_device_tool` 要求明确 device_id、tool_name、catalog_version 和对象参数；Agent 再读取实时本地目录并通过 `manager.call` 走原有权限路径，不自动切换设备、不在断线后重放。
 - Worker 目录校验现会对规范化工具定义重新计算 SHA-256，拒绝版本与内容不匹配的注册/更新；保留精确旧版静态目录兼容。Wrangler 配置不再固定写死三项 `ALLOWED_TOOLS`；部署者仍可通过该环境变量进一步收窄全局范围。
 - Issue #5 的四项 Windows 只读工具已注册并进入动态安全目录：`list_usb_devices`、`list_pnp_devices`、`list_serial_ports`、`get_pnp_device_details`。使用固定 PowerShell/CIM 查询、参数和输出上限，不请求管理员提升、不打开/读写 COM 端口、不改变驱动或设备状态。
@@ -9,8 +9,8 @@
 - Windows 构建：默认 `dist/win-unpacked` 被当前运行实例占用，未关闭用户进程；改用 `$env:CTH_DIST_SUBDIR='rocket-unifyharness-catalog-20261101'; npm run build` 成功，输出 `dist/rocket-unifyharness-catalog-20261101/win-unpacked`。
 - rocket 实际本地链路：`McpManager` 可见 19 项，动态安全目录 15 项，四项硬件工具全部存在；实际调用 `list_usb_devices` 返回 11 项、`list_pnp_devices` 返回 18 项、`list_serial_ports` 返回 0 项。当前未识别到目标 SF32 板，Issue #5 的 VID/PID、PnP 实例和 COM 映射验收仍阻塞，不能标记通过。
 - 生产 Cloudflare Worker 未部署，OAuth、配对凭据和旧 Tunnel 均未更改。当前运行中的 ChatToHarness 实例仍报告构建标识 `769ec712`、49 项工具；本轮新版为隔离目录构建，尚未替换/重启运行实例。
-- Issue 状态：#6 的 Worker→DeviceHub→Agent→McpManager loopback E2E 已验证，等待最新 PR CI 和 Cloudflare-deployed non-production smoke；#5 的实现和自动测试已完成，等待目标 SF32 实机识别。当前未宣称 CI 通过。
-- 下一步：跟踪 PR #7 的 Application checks；如需 Cloudflare-deployed non-production smoke，单独建立隔离测试环境后再执行；目标 SF32 接入 rocket 后重跑硬件枚举。生产 Worker 仍不部署，除非用户另行授权。
+- Issue 状态：#6 的 Worker→DeviceHub→Agent→McpManager loopback E2E 已验证，等待 PR CI；#5 的实现和自动测试已完成，等待目标 SF32 实机识别；#8 已在 `ci.yml` / `desktop.yml` 固定 Xcode 16.2；#9 已在 `ci.yml` / `feature-macos-dmg.yml` 增加 Cloud Router 依赖安装。三个工作流 YAML 均通过本地解析，CI 尚待新 commit 复验。
+- 下一步：提交并推送 #8/#9 的 CI 修复，跟踪 PR #7 新一轮 macOS/Windows checks；目标 SF32 接入 rocket 后重跑硬件枚举。Cloudflare-deployed non-production smoke 另行建立隔离测试环境后执行；生产 Worker 仍不部署，除非用户另行授权。
 
 ## 2026-10-30 恢复 Cloudflare 部署清理按钮
 

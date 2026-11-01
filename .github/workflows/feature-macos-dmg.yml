@@ -24,6 +24,8 @@ jobs:
           node-version: '24.22.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Install Cloud Router dependencies for app tests
+        run: npm ci --prefix cloud-router --include=optional --no-audit --no-fund
       - name: Build native Mac Computer Use helper
         run: npm run build:computer-use
       - name: Cloud initialization and UI regression
