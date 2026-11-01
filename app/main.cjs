@@ -29,7 +29,7 @@ const home=storageDirectory({platform,userHome:os.homedir(),appData:process.env.
 app.setName(testMode?'ChatToHarness Acceptance '+require('node:crypto').createHash('sha256').update(home).digest('hex').slice(0,12):platform==='darwin'?'LocalHarness':product);
 app.setPath('userData',home);
 let history,diagnosticWriter,diagnosticError;
-let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,cloudRouter,cloudBootstrap,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
+let window,tray,trayMenu,settings,runtime,updater,mcpSettings,mcpManager,computerUse,cloudRouter,cloudBootstrap,remoteToolAccess,permissionPromptVisible=false,computerUseIntentEpoch=0,fatal='',quitting=false,installing=false,restarting=false,quitReady=false,queue=Promise.resolve(),actionEpoch=0;
 const indexURL=pathToFileURL(path.join(__dirname,'index.html')).href;
 const resources=(testMode&&process.env.LOCALHARNESS_RESOURCES)|| (app.isPackaged?process.resourcesPath:(process.env.LOCALHARNESS_RESOURCES||path.join(__dirname,'..','resources')));
 const links=Object.freeze({
@@ -289,6 +289,8 @@ function registerIPC(){
   bind('cloud-bootstrap-copy-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.copyOwnerKey(require('electron').clipboard);});
   bind('cloud-bootstrap-reveal-key',()=>{if(!cloudBootstrap)throw Error('CLOUD_SETUP_UNAVAILABLE');return cloudBootstrap.ownerKey();});
   bind('cloud-router-list-devices',async()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.refreshDevices();});
+  bind('cloud-router-tool-permissions',()=>{if(!remoteToolAccess||!mcpManager)throw Error('CLOUD_ROUTER_UNAVAILABLE');return remoteToolAccess.list(mcpManager);});
+  bind('cloud-router-tool-grant',input=>{if(!remoteToolAccess||!mcpManager)throw Error('CLOUD_ROUTER_UNAVAILABLE');return remoteToolAccess.set(mcpManager,input);});
   bind('cloud-router-disconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.disconnect();});
   bind('cloud-router-reconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.reconnect();});
   bind('cloud-router-auto-pair',async input=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.autoPair({mcpUrl:input?.mcpUrl,openExternal:url=>shell.openExternal(url)});});
@@ -386,12 +388,29 @@ else{
         }});
       mcpManager.history=history;
       mcpManager.broker=new McpGateway(mcpManager);runtime.gateway=mcpManager;
+      const {RemoteToolAccess}=require('./remote-tool-access.cjs');
+      remoteToolAccess=new RemoteToolAccess({home,onChange:()=>cloudRouter?.catalogChanged(),
+        approve:async ({kind,name,args})=>{
+          if(quitting||installing||!window||window.isDestroyed())return false;
+          // Local user approval, not a remotely supplied setting or MCP response.
+          // Show the actual operation arguments to the local authorizing user.
+          const target=JSON.stringify(args).slice(0,4000);
+          show();
+          const reply=await dialog.showMessageBox(window,{
+            type:'warning',title:t('UnifyHarness 远程操作授权'),
+            message:kind==='session'?t('允许本次 Computer Use 操作会话？'):t('允许执行本次高风险操作？'),
+            detail:t('当前设备：')+computerUse.deviceIdentity.name+'\n'+t('工具：')+name+'\n'+t('目标：')+target+
+              '\n'+(kind==='session'?t('仅本次会话有效；STOP/Esc 和用户接管始终有效。'):t('本次确认不授权下一次调用。')),
+            buttons:[t('允许这一次'),t('拒绝')],defaultId:1,cancelId:1,noLink:true
+          });
+          return reply.response===0;
+        }});
       // Desktop pairing is opt-in, but once paired the agent reconnects on app start.
       // Never alter the current Secure MCP Tunnel until real multi-device acceptance.
       const {CloudRouterService}=require('./cloud-router-service.cjs');
       const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
       cloudRouter=new CloudRouterService({getAccountConnection:input=>cloudBootstrap.accountConnection(input),fetcher:harnessNetwork.fetcher,socketFactory:harnessNetwork.createWebSocket,manager:mcpManager,identity:computerUse.deviceIdentity,
-        pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish,
+        pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish,remoteAccess:remoteToolAccess,
          getOwnerKey:requestedUrl=>{
            try{
              // Only the already-verified cloud this app initialized/rotated.

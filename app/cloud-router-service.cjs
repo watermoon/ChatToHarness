@@ -3,15 +3,17 @@
 // No remote command/file write/Computer Use support until production OAuth/approvals.
 const {connectAgent} = require('./cloud-router-agent.cjs');
 const {createDeviceCatalog} = require('./cloud-router-catalog.cjs');
+const {definitions} = require('./remote-tool-access.cjs');
 const {osProductVersion}=require('./device-os-version.cjs');
 const LOCAL_VERSION=require('../package.json').version;
 const LOCAL_OS_VERSION=osProductVersion();
 const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pairing.cjs');
 class CloudRouterService {
-  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection}) {
+  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection,remoteAccess}) {
     if (!manager || !identity?.id || !identity.platform || !identity.name)
       throw new Error('CLOUD_ROUTER_DEVICE_UNAVAILABLE');
     this.manager = manager;this.getAccountConnection=getAccountConnection;
+    this.remoteAccess=remoteAccess;
     this.pairStore=pairStore;
     this.getOwnerKey=getOwnerKey;
     this.fetcher=fetcher;
@@ -33,7 +35,7 @@ class CloudRouterService {
     };
     this.manager.on?.('state', this.catalogChanged);
   }
-  catalog() { return createDeviceCatalog(this.manager); }
+  catalog() { return createDeviceCatalog(this.manager,this.remoteAccess); }
   start({url, token, enabled = false} = {}) {
     this.stop();
     if (!enabled) return this.status();
@@ -47,8 +49,8 @@ class CloudRouterService {
         url: parsed.href, token, deviceId: this.identity.id, name: this.identity.name,
         platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
         catalogProvider: () => this.catalog(),
-        execute: (name, args) => this.execute(name, args),
-        onStatusChange: () => this.onChange(this.status())
+        execute: (name, args, context) => this.execute(name, args, context),
+        onStatusChange: status => {if(status==='reconnecting')this.remoteAccess?.clearSessions();this.onChange(this.status());}
       });
       return this.status();
     } catch (error) {
@@ -224,7 +226,7 @@ class CloudRouterService {
     })();
     return this.devicesPromise;
   }
-  async execute(name, args) {
+  async execute(name, args, context={}) {
     if (!args || typeof args !== 'object' || Array.isArray(args))
       throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
     const catalog = this.catalog();
@@ -258,9 +260,16 @@ class CloudRouterService {
         throw new Error('CLOUD_ROUTER_TOOL_DENIED');
       return broker.toolCall(name,args);
     }
-    // This path deliberately goes through McpManager.call so existing local
-    // service trust, tool policy, project grants and approval prompts remain active.
-    return this.manager.call(name,args);
+    // Local grants are evaluated afresh, including after any dialog, and do not
+    // bypass McpManager's existing project, service or window authorization.
+    const tool=definitions(this.manager).find(item=>item.name===name);
+    if(!tool || (this.remoteAccess && !this.remoteAccess.enabled(tool)))
+      throw Error('CLOUD_ROUTER_TOOL_DENIED');
+    const gate=this.remoteAccess ? await this.remoteAccess.before(tool,args,context) : {};
+    if(!this.catalog().tools.some(item=>item.name===name))
+      throw Error('CLOUD_ROUTER_TOOL_DENIED');
+    const result=await this.manager.call(name,args);
+    return this.remoteAccess ? this.remoteAccess.after(gate,result) : result;
   }
   status() {
     return {paused:this.paused,enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,
@@ -274,6 +283,6 @@ class CloudRouterService {
       devicesError:this.devicesError,devicesRefreshing:this.devicesRefreshing,
       ...(this.lastError ? {error: this.lastError} : {})};
   }
-  stop() { this.autoPairPending=null; this.agent?.close(); this.agent = null; this.phase = 'disabled'; this.lastError = ''; }
+  stop() { this.autoPairPending=null; this.remoteAccess?.clearSessions(); this.agent?.close(); this.agent = null; this.phase = 'disabled'; this.lastError = ''; }
 }
 module.exports = {CloudRouterService};

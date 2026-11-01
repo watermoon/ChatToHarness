@@ -97,15 +97,26 @@ async function validateCatalog(value) {
   const names=new Set(), tools=[];
   for (const item of value.tools) {
     if (!item || typeof item!=='object' || !ID.test(item.name||'') || names.has(item.name) ||
-        deniedRemoteName(item.name)) return null;
+        (deniedRemoteName(item.name)&&!item.remoteGrant)) return null;
     const hints=item.annotations;
     const schema=item.inputSchema;
-    if (hints?.readOnlyHint!==true || hints?.destructiveHint!==false || hints?.openWorldHint!==false ||
+    const name=String(item.name).split('__').pop();
+    const expectedMode=name==='computer_use'?'session':
+      ['kill_process','force_terminate','move_file','undo_project_edit',
+       'start_process','start_task','interact_with_process','set_config_value'].includes(name)?'per_call':'persistent';
+    const grant=item.remoteGrant;
+    if(grant!==undefined && (!grant || typeof grant!=='object'||Array.isArray(grant) ||
+        Object.keys(grant).length!==1 || grant.mode!==expectedMode))return null;
+    if((!grant && (hints?.readOnlyHint!==true || hints?.destructiveHint!==false || hints?.openWorldHint!==false)) ||
+        (grant && (!hints || typeof hints.readOnlyHint!=='boolean' ||
+          typeof hints.destructiveHint!=='boolean' || typeof hints.openWorldHint!=='boolean')) ||
         !schema || typeof schema!=='object' || Array.isArray(schema) || schema.type!=='object' ||
         !schema.properties || typeof schema.properties!=='object' || Array.isArray(schema.properties) ||
         typeof item.description!=='string' || item.description.length>2048) return null;
     const tool={name:item.name,description:item.description,inputSchema:schema,
-      annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:hints.idempotentHint===true,openWorldHint:false}};
+      annotations:{readOnlyHint:hints.readOnlyHint===true,destructiveHint:hints.destructiveHint===true,
+        idempotentHint:hints.idempotentHint===true,openWorldHint:hints.openWorldHint===true},
+      ...(grant?{remoteGrant:{mode:expectedMode}}:{})};
     if (new TextEncoder().encode(JSON.stringify(tool)).length>MAX_TOOL_BYTES) return null;
     names.add(item.name);tools.push(tool);
   }
@@ -258,7 +269,9 @@ export class DeviceHub {
       const ws = currentSocket(this.ctx, input.device_id);
       if (!ws) return json(error('DEVICE_OFFLINE', 'Selected device is not connected'), 503);
       const requestId = crypto.randomUUID();
-      const ms = Math.max(1000, Math.min(30000, Number(input.timeout_ms) || 15000));
+      const grantedTool=catalog.tools.find(tool=>tool.name===input.tool_name);
+      const needsLocalConfirmation=['session','per_call'].includes(grantedTool?.remoteGrant?.mode);
+      const ms = Math.max(1000, Math.min(30000, Number(input.timeout_ms) || (needsLocalConfirmation?30000:15000)));
       return new Promise(resolve => {
         const timeout = setTimeout(() => {
           this.pending.delete(requestId);
@@ -266,7 +279,7 @@ export class DeviceHub {
         }, ms);
         this.pending.set(requestId, {ws, resolve, timeout});
         try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name,
-          catalog_version:catalog.version, arguments: input.arguments})); }
+          catalog_version:catalog.version, arguments: input.arguments,expires_at:Date.now()+ms})); }
         catch {
           clearTimeout(timeout); this.pending.delete(requestId);
           resolve(json(error('EXECUTION_UNKNOWN', 'Transport failed; execution state unknown'), 502));
@@ -372,7 +385,7 @@ const tools = [
         cursor:{type:'string',description:'Opaque next_cursor from the previous page'},
         limit:{type:'integer',minimum:1,maximum:64,default:32}}}},
   {name: 'call_device_tool', description: 'Invoke a tool present in the selected device current remote-safe catalog. Never silently substitute a different device.',
-    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:false,openWorldHint:false},
+    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:true},
     inputSchema: {type: 'object', additionalProperties: false, required: ['device_id','tool_name','catalog_version','arguments'],
       properties: {device_id: {type: 'string', description: 'Device ID returned by list_devices'},
         tool_name: {type: 'string', description: 'Tool name from list_device_tools'},

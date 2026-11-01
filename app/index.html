@@ -111,6 +111,12 @@
             </details>
             <p id="cloud-devices-status" class="field-hint" role="status" aria-live="polite">配对后可查看设备清单。</p>
           </section>
+          <section class="card connection-card" aria-labelledby="cloud-tool-access-title">
+            <div class="card-header"><div><h2 id="cloud-tool-access-title">远程工具权限 · 当前设备</h2><p>仅在本机勾选允许 UnifyHarness 远程使用的工具。默认只读；本机其他权限仍然生效。</p></div><button id="cloud-tool-access-refresh" class="button secondary" type="button">刷新工具</button></div>
+            <p id="cloud-tool-access-status" class="field-hint" role="status" aria-live="polite">正在读取本机工具权限…</p>
+            <div id="cloud-tool-access-list" class="remote-tool-access-list" role="group" aria-label="远程工具权限"></div>
+            <p class="field-hint">Computer Use：新操作会话须本机确认一次，会话内不重复询问；终止进程、移动或撤销：每次执行都需本机确认。取消勾选立即撤销授权。STOP/Esc 与用户接管始终有效。</p>
+          </section>
           <section class="card credentials-card"><div><h2>更换或清除凭据</h2><p>替换密钥时直接输入新值。清除后会停止连接，工作目录与规则设置仍然保留。</p></div><button id="clear-credentials" class="button subtle-danger" type="button">清除凭据</button></section><div class="quiet-note"><span aria-hidden="true">ⓘ</span><p>文件工具需要先选择工作目录；MCP 扩展可以单独使用。Runtime API Key 仅用于运行通道，不能代替客户端或 API 调用方的凭据。</p></div>
         </section>
 

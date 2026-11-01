@@ -278,3 +278,25 @@ test('inspect_client_context reports absent or invalid hints without guessing, a
   assert.equal(badArgs.isError, true);
   assert.equal(JSON.parse(badArgs.content[0].text).code, 'BAD_REQUEST');
 });
+
+
+test('explicitly granted configuration reader is admitted without widening the default catalog',async()=>{
+  const f=await fixture();
+  const ws=await f.register('rocket','Rocket');
+  const create=granted=>{
+    const tools=[{name:'get_config',description:'Read local settings',
+      inputSchema:{type:'object',properties:{},additionalProperties:false},
+      annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+      ...(granted?{remoteGrant:{mode:'persistent'}}:{})}];
+    const version=createHash('sha256').update(JSON.stringify({schema_version:1,tools})).digest('hex');
+    return {schema_version:1,version,tools};
+  };
+  await f.hub.webSocketMessage(ws,JSON.stringify({type:'catalog_update',catalog:create(false)}));
+  assert.equal(ws.messages.at(-1).code,'CATALOG_INVALID');
+  const allowed=create(true);
+  await f.hub.webSocketMessage(ws,JSON.stringify({type:'catalog_update',catalog:allowed}));
+  assert.equal(ws.messages.at(-1).type,'catalog_ack');
+  const page=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket'}});
+  assert.deepEqual(page.body.result.structuredContent.tools[0].remoteGrant,{mode:'persistent'});
+  assert.equal(page.body.result.structuredContent.catalog_version,allowed.version);
+});

@@ -51,8 +51,11 @@ function isRemoteEligible(tool) {
     hints?.openWorldHint === false;
 }
 
-function copyDefinition(tool) {
-  if (!isRemoteEligible(tool)) return null;
+function copyDefinition(tool, access) {
+  const safe = isRemoteEligible(tool);
+  if (access && !access.enabled(tool)) return null;
+  const granted = !safe && access?.enabled(tool) === true;
+  if (!safe && !granted) return null;
   if (!tool.inputSchema || typeof tool.inputSchema !== 'object' ||
       Array.isArray(tool.inputSchema) || tool.inputSchema.type !== 'object' ||
       !tool.inputSchema.properties || typeof tool.inputSchema.properties !== 'object' ||
@@ -63,24 +66,25 @@ function copyDefinition(tool) {
     description: typeof tool.description === 'string' ? tool.description.slice(0, 2048) : '',
     inputSchema: JSON.parse(JSON.stringify(tool.inputSchema)),
     annotations: {
-      readOnlyHint: SAFE_ANNOTATIONS.readOnlyHint,
-      destructiveHint: SAFE_ANNOTATIONS.destructiveHint,
+      readOnlyHint: granted ? tool.annotations?.readOnlyHint === true : SAFE_ANNOTATIONS.readOnlyHint,
+      destructiveHint: granted ? tool.annotations?.destructiveHint === true : SAFE_ANNOTATIONS.destructiveHint,
       idempotentHint: tool.annotations?.idempotentHint === true,
-      openWorldHint: SAFE_ANNOTATIONS.openWorldHint
-    }
+      openWorldHint: granted ? tool.annotations?.openWorldHint === true : SAFE_ANNOTATIONS.openWorldHint
+    },
+    ...(granted ? {remoteGrant:{mode:access.mode(tool.name)}} : {})
   };
   if (Buffer.byteLength(JSON.stringify(definition), 'utf8') > MAX_TOOL_BYTES) return null;
   return definition;
 }
 
-function createDeviceCatalog(manager) {
+function createDeviceCatalog(manager, access) {
   const source = [
     ...(manager?.broker?.results?.tools?.() || []),
     ...(manager?.visibleTools?.() || [])
   ];
   const byName = new Map();
   for (const item of source) {
-    const definition = copyDefinition(item);
+    const definition = copyDefinition(item, access);
     if (definition && !byName.has(definition.name)) byName.set(definition.name, definition);
   }
   const tools = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));

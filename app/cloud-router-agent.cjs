@@ -107,7 +107,7 @@ function connectAgent({
         if (!allowedTool(toolName, catalog)) throw new Error('LOCAL_TOOL_DENIED');
         if (!args || typeof args !== 'object' || Array.isArray(args))
           throw new Error('INVALID_ARGUMENTS');
-        reply = {type: 'result', request_id: message.request_id, result: await execute(toolName, args)};
+        reply = {type: 'result', request_id: message.request_id, result: await execute(toolName, args, {expiresAt:message.expires_at})};
       } catch (err) {
         reply = {type: 'result', request_id: message.request_id,
           error: String(err?.code || err?.message || 'LOCAL_TOOL_FAILED')};

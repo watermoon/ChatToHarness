@@ -179,6 +179,14 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
 }
 
 
+/* Remote permission controls are local-only. No access is implied by showing a row. */
+.remote-tool-access-list {display:grid;gap:0.4rem;max-height:340px;overflow:auto;padding:0.35rem;border:1px solid var(--border,#d5dae0);border-radius:10px}
+.remote-tool-access-row {display:flex;align-items:center;gap:0.8rem;padding:0.6rem 0.7rem;cursor:pointer;border-radius:6px}
+.remote-tool-access-row:hover {background:rgba(90,100,120,0.06)}
+.remote-tool-access-row input {flex:none;min-width:18px;min-height:18px}
+.remote-tool-access-description {display:flex;flex-direction:column;min-width:0;gap:0.15rem}
+.remote-tool-access-description strong {overflow-wrap:anywhere;font-size:0.9rem}
+.remote-tool-access-description small {font-size:0.75rem;opacity:0.75}
 /* Cloudflare selection and paired-device inventory */
 #cloud-account-picker select,#cloud-kv-picker select{width:100%;min-height:38px;max-width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)}
 #cloud-account-picker select:focus-visible,#cloud-kv-picker select:focus-visible{outline:3px solid #98b4fa;outline-offset:2px}

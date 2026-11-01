@@ -1,3 +1,12 @@
+## 2026-11-02 UnifyHarness 设备端远程工具逐项授权（Issue #11）
+
+- 用户批准的最终策略：Computer Use **每次操作会话仅本机授权一次**（会话内连续输入不逐步确认），进程终止与破坏性操作 **每次执行本机确认**；保持原生 Computer Use 的目标窗口授权、STOP/Esc、人工接管和本机项目/目录授权，不允许通过云端强行跳过。
+- 当前开发分支 `feat/cloudflare-multi-device-router`，PR #7；客户端在云端配置中新增本地权限列表、开关和风险说明；配置存于单设备本地 `remote-tool-grants.json`，未授权工具默认保持原先安全白名单规则；更改授权触发本地目录重同步。
+- `RemoteToolAccess` 在每次远程调用前核实授予状态，敏感动作在本机弹出批准/拒绝对话框；Computer Use 授权会话绑定真实 `session_id`，关闭、撤销、断线时失效；处理请求到期、用户拒绝和等待审批期间撤销权限的竞态。Cloudflare catalog schema 同步携带经过验证的授权模式，但不能替代设备端当前权限判定。风险与实现边界见 `docs/adr/2026-11-02-unifyharness-remote-authorization.md`。
+- 已跑 `node --test tests/remote-tool-access.test.cjs tests/cloud-router-remote-authorization.test.cjs tests/cloud-router.test.cjs tests/cloud-router-catalog.test.cjs tests/cloud-router-agent.test.cjs tests/cloud-router-service.test.cjs`：43 PASS、0 FAIL；`node --test --test-reporter=tap tests/*.test.cjs`：735 项，716 PASS、19 SKIP、0 FAIL；`node scripts/build-site.cjs` 通过；`cd cloud-router && npm run check` 两个 Worker dry-run 均通过。
+- Windows 隔离输出 `CTH_DIST_SUBDIR=rocket-remote-tool-authorization-20261102; npm run build` 成功：`dist/rocket-remote-tool-authorization-20261102/win-unpacked`。现运行实例未替换、未用真实客户端审批弹框逐项做 UI 验收；Cloudflare 生产 Worker 未再次部署，现有 rocket 远程授权能力依旧仅限当前生产已公开目录。
+- 接下来：检查 PR CI、跨平台兼容、在隔离测试环境做 Worker→客户端带授权实机验收，再决定生产发布与旧客户端兼容处理；用户手动勾选高权限工具后才能扩大该设备远程操作能力。不得将 unit test 视为已完成用户桌面验收。
+
 ## 2026-11-01 云端 Worker 动态目录上线与 rocket 实机同步复验（Issue #6）
 
 - 用户已运行新版 rocket 客户端；通过 `get_harness_status` 实际核对运行构建 `7c74591c085165a278b4443fb1bb96c35333710c`、dirty=true、构建于 2026-11-01 14:30:25Z；本地 MCP 网关共 53 个可用工具（含四项只读硬件检测）。此处的 53 是运行中的 Gateway 工具数，不能与先前在隔离测试进程中得到的 McpManager=19 混为一谈。

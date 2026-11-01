@@ -541,6 +541,40 @@
       pairDialogMessage(t('配对失败：')+String(error?.message||t('请核对服务地址和配对码')).slice(0,120));
     }finally{cloudPairSubmit.disabled=false;}
   });
+  const toolAccessList=byId('cloud-tool-access-list');
+  const toolAccessStatus=byId('cloud-tool-access-status');
+  const refreshRemoteToolAccess=async()=>{
+    if(!toolAccessList)return;
+    try{
+      const result=await api.cloudRouterToolPermissions();
+      toolAccessList.replaceChildren();
+      for(const item of result.tools){
+        const row=document.createElement('label');row.className='remote-tool-access-row';
+        const check=document.createElement('input');check.type='checkbox';check.checked=item.allowed;
+        const detail=document.createElement('span');detail.className='remote-tool-access-description';
+        const title=document.createElement('strong');title.textContent=item.name;
+        const hint=document.createElement('small');
+        hint.textContent=t(item.mode==='session'?'操作会话授权一次':
+          item.mode==='per_call'?'每次执行前本机确认':
+          item.read_only?'只读':'启用后仍须通过本地权限验证');
+        detail.append(title,hint);
+        check.addEventListener('change',async()=>{
+          check.disabled=true;
+          try{
+            const updated=await api.cloudRouterToolGrant({name:item.name,enabled:check.checked});
+            toolAccessStatus.textContent=t('当前授权')+'：'+updated.remote_count+'/'+updated.total;
+          }catch(error){
+            check.checked=!check.checked;
+            toolAccessStatus.textContent=t('授权设置失败')+'：'+String(error?.message||error).slice(0,120);
+          }finally{check.disabled=false;}
+        });
+        row.append(check,detail);toolAccessList.append(row);
+      }
+      toolAccessStatus.textContent=t('当前授权')+'：'+result.remote_count+'/'+result.total;
+    }catch(error){toolAccessStatus.textContent=t('工具读取失败')+'：'+String(error?.message||error).slice(0,120);}
+  };
+  byId('cloud-tool-access-refresh')?.addEventListener('click',()=>void refreshRemoteToolAccess());
+  void refreshRemoteToolAccess();
   api.getState().then(s=>{updateCloudPairStatus(s);if(s?.cloudRouter?.paired)void refreshCloudDevices();}).catch(()=>{});
   void discoverCloud({});
 
