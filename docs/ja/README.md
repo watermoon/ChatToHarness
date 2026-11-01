@@ -51,6 +51,7 @@
 - [リアルタイムログを絞り込む](live-logs.md)
 - [実行履歴を探して読み取る](execution-records.md)
 - [診断情報・詳細・履歴を書き出す](diagnostics.md)
+- [USB・PnP・シリアルデバイスを読み取り専用で確認する](hardware-inspection.md)
 
 ## 問題を解決する
 

@@ -9,7 +9,7 @@
 5. 桌面端自动查询审批结果，通过后把自己生成的设备密钥以操作系统 safeStorage 加密存储，之后启动自动连接；云端仅保存密钥摘要，不会持久化设备密钥明文。
 6. 旧版 create_pairing_code / 手工输入配对码仍可在客户端「兼容方式」中使用，用于恢复或跨版本兼容。
 
-安全要求：每个请求有效期 5 分钟；请求 ID 和轮询密钥分别随机生成，轮询状态必须验证轮询密钥；设备 ID 不能覆盖已有已配对设备；浏览器身份验证走 auth Worker 的私有 Service Binding，不开放匿名 Owner Key 检查接口。非授权设备知道 MCP 地址也无法配对。远程只读工具白名单保持不变。
+安全要求：每个请求有效期 5 分钟；请求 ID 和轮询密钥分别随机生成，轮询状态必须验证轮询密钥；设备 ID 不能覆盖已有已配对设备；浏览器身份验证走 auth Worker 的私有 Service Binding，不开放匿名 Owner Key 检查接口。非授权设备知道 MCP 地址也无法配对。远程工具目录由配对设备动态发布；云端只接受设备目录中标记为只读、非破坏性、非开放世界的工具，设备端仍逐次执行本地授权检查。
 
 ## 用户体验（兼容旧版手工流程）
 
@@ -18,7 +18,7 @@
 3. 在要连接的 Windows/macOS 设备上启动 ChatToHarness，进入“连接配置 → 多设备连接 · 一次配对”。
 4. 输入统一的 `https://<your-mcp-domain>/mcp` 服务地址，粘贴配对码，点击“配对当前设备”。
 5. 后台自动使用配对码领取专属设备密钥（32 随机字节）。密钥通过操作系统 `safeStorage` 加密存储在用户配置目录，云端仅保存 SHA-256 摘要。
-6. 后续启动自动使用设备密钥建立 `wss://<your-mcp-domain>/agent`；ChatGPT 调用 `list_devices` 即可看到多个已连接设备，并通过 `call_device_tool` 的 `device_id` 精确路由。
+6. 后续启动自动使用设备密钥建立 `wss://<your-mcp-domain>/agent`；ChatGPT 调用 `list_devices` 即可看到多个已连接设备；先通过 `list_device_tools(device_id)` 读取目标设备的版本化工具目录，再通过 `call_device_tool(device_id, tool_name, catalog_version, arguments)` 精确路由。
 
 **设备端无需 GitHub 登录、Cloudflare 单独登录、输入自定义设备 ID、手工编辑密钥或创建额外 ChatGPT 插件。**
 
@@ -28,7 +28,7 @@
 - 配对码为 256 位随机数，服务端只保存摘要，一次性使用，5 分钟超时。**不得在公开群聊或日志中共享**。
 - 已配对的设备 ID 不可通过另一个有效配对码覆盖；各设备彼此独立，不能通过“仅报设备名”冒充。
 - 新连接只有在配对后拥有正确密钥时才被接受；云端只存储密钥的摘要，持久密钥仅在该设备可解密的配置中保存。
-- 仅允许 `get_harness_status` 这项只读工具；远程 Shell、文件写入和 Computer Use 未开放。
+- 远程只允许设备目录明确发布的只读、非破坏性、非开放世界工具；目录同步本身不授予权限。远程 Shell、进程执行、文件写入、Git 写入和 Computer Use 仍被拒绝。`get_tool_result_page/file` 只可读取 `get_harness_status` 产生的结果。
 - Cloudflare 的正式端点必须 HTTPS/WSS，禁止公网 HTTP；本地安全存储不可用时，不能保存或激活新配对。
 - 现有三个 Tunnel 保留到生产部署和双设备真机验收完成为止。
 

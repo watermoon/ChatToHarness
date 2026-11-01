@@ -259,6 +259,15 @@
         "copy-tunnel"
       ],
       "tools": []
+    },
+    "hardware-inspection": {
+      "ui": [],
+      "tools": [
+        "list_usb_devices",
+        "list_pnp_devices",
+        "list_serial_ports",
+        "get_pnp_device_details"
+      ]
     }
   }
 }

@@ -43,6 +43,33 @@ test('agent registers device, executes allowed tool and denies non-allowlisted o
   assert.equal(ws.sent[2].error, 'LOCAL_TOOL_DENIED');
   agent.close();
 });
+test('agent publishes catalog, syncs changes and rejects stale catalog versions',async()=>{
+  FakeWS.instances.length=0;
+  const catalog={schema_version:1,version:'a'.repeat(64),tools:[{name:'read_inventory'}]};
+  const observed=[];
+  const agent=connectAgent(options({catalogProvider:()=>catalog,allowedTools:[],execute:async(name,args)=>{
+    observed.push({name,args});return {device:'moon'};
+  }}));
+  const ws=FakeWS.instances.at(-1);ws.opened();
+  assert.equal(ws.sent[0].type,'register');
+  assert.equal(ws.sent[0].catalog.version,catalog.version);
+  ws.message({type:'registered',device_id:'moon',catalog_version:catalog.version});
+  ws.message({type:'invoke',request_id:'catalog-1',tool_name:'read_inventory',
+    catalog_version:catalog.version,arguments:{scope:'usb'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(observed,[{name:'read_inventory',args:{scope:'usb'}}]);
+  const oldVersion=catalog.version;
+  catalog.version='b'.repeat(64);
+  catalog.tools=[{name:'read_inventory'},{name:'list_usb_devices'}];
+  assert.equal(agent.syncCatalog(),true);
+  assert.equal(ws.sent.at(-1).type,'catalog_update');
+  assert.equal(ws.sent.at(-1).catalog.version,catalog.version);
+  ws.message({type:'invoke',request_id:'catalog-stale',tool_name:'read_inventory',
+    catalog_version:oldVersion,arguments:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ws.sent.at(-1).error,'CATALOG_VERSION_STALE');
+  agent.close();
+});
 test('only registered, live socket accepts work and closed agent never reconnects', async () => {
   FakeWS.instances.length = 0;
   let calls = 0;

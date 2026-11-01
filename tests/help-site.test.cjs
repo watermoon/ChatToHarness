@@ -7,12 +7,12 @@ const path=require('node:path');
 const {buildHelp,readArticle,resolveLink,safeURL,slugs}=require('../scripts/help-site.cjs');
 const navigation=require('../docs/navigation.json');
 const root=path.resolve(__dirname,'..');
-test('all 114 repository articles build with translated navigation, stable sections, images and deep links',t=>{
+test('all 117 repository articles build with translated navigation, stable sections, images and deep links',t=>{
   const output=fs.mkdtempSync(path.join(os.tmpdir(),'cth-help-site-'));t.after(()=>fs.rmSync(output,{recursive:true,force:true}));
-  assert.equal(slugs.length,38);assert.equal(new Set(slugs).size,38);
-  const built=buildHelp(output);assert.equal(built.urls.length,117);
+  assert.equal(slugs.length,39);assert.equal(new Set(slugs).size,39);assert.ok(slugs.includes('hardware-inspection'));
+  const built=buildHelp(output);assert.equal(built.urls.length,120);
   for(const locale of navigation.locales){
-    const search=JSON.parse(fs.readFileSync(path.join(output,'docs',locale,'search.json'),'utf8'));assert.equal(search.articles.length,38);
+    const search=JSON.parse(fs.readFileSync(path.join(output,'docs',locale,'search.json'),'utf8'));assert.equal(search.articles.length,39);
     for(const slug of slugs){
       const source=readArticle(locale,slug),html=fs.readFileSync(path.join(output,'docs',locale,slug,'index.html'),'utf8');
       assert.ok(html.includes(`<h1 id="title">${source.title}</h1>`));

@@ -2,12 +2,11 @@
 // Experimental, opt-in Cloudflare Agent. Legacy Secure MCP Tunnel is unaffected.
 // No remote command/file write/Computer Use support until production OAuth/approvals.
 const {connectAgent} = require('./cloud-router-agent.cjs');
+const {createDeviceCatalog} = require('./cloud-router-catalog.cjs');
 const {osProductVersion}=require('./device-os-version.cjs');
 const LOCAL_VERSION=require('../package.json').version;
 const LOCAL_OS_VERSION=osProductVersion();
 const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pairing.cjs');
-const SAFE = Object.freeze(['get_harness_status','get_tool_result_page','get_tool_result_file']);
-const FORBIDDEN = new Set(['computer_use','start_process','start_task','write_file','edit_block','apply_project_edit']);
 class CloudRouterService {
   constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection}) {
     if (!manager || !identity?.id || !identity.platform || !identity.name)
@@ -28,7 +27,13 @@ class CloudRouterService {
     this.devices=[];this.devicesUpdatedAt=null;this.devicesError='';this.devicesRefreshing=false;this.devicesPromise=null;
     this.autoPairPending=null;
     this.paused=false;
+    this.catalogChanged = () => {
+      this.agent?.syncCatalog?.();
+      this.onChange(this.status());
+    };
+    this.manager.on?.('state', this.catalogChanged);
   }
+  catalog() { return createDeviceCatalog(this.manager); }
   start({url, token, enabled = false} = {}) {
     this.stop();
     if (!enabled) return this.status();
@@ -41,7 +46,7 @@ class CloudRouterService {
       this.agent = connectAgent({
         url: parsed.href, token, deviceId: this.identity.id, name: this.identity.name,
         platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
-        allowedTools: SAFE,
+        catalogProvider: () => this.catalog(),
         execute: (name, args) => this.execute(name, args),
         onStatusChange: () => this.onChange(this.status())
       });
@@ -208,7 +213,9 @@ class CloudRouterService {
               !/[\x00-\x1f]/.test(x.os_version)?x.os_version:'',
             harness_version:typeof x.harness_version==='string'&&
               /^[0-9A-Za-z.+-]{1,32}$/.test(x.harness_version)?x.harness_version:'',
-            paired_at:Number.isFinite(x.paired_at)?x.paired_at:null};
+            paired_at:Number.isFinite(x.paired_at)?x.paired_at:null,
+            catalog_version:typeof x.catalog_version==='string'&&/^[a-f0-9]{64}$/.test(x.catalog_version)?x.catalog_version:'',
+            catalog_count:Number.isSafeInteger(x.catalog_count)&&x.catalog_count>=0&&x.catalog_count<=128?x.catalog_count:0};
         });
         this.devicesUpdatedAt=Date.now();this.devicesError='';
       }catch(e){this.devicesError=e.message?.startsWith('CLOUD_')?e.message:'CLOUD_ROSTER_UNAVAILABLE';}
@@ -218,9 +225,11 @@ class CloudRouterService {
     return this.devicesPromise;
   }
   async execute(name, args) {
-    if (FORBIDDEN.has(name) || !SAFE.includes(name)) throw new Error('CLOUD_ROUTER_TOOL_DENIED');
     if (!args || typeof args !== 'object' || Array.isArray(args))
       throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
+    const catalog = this.catalog();
+    if (!catalog.tools.some(item => item.name === name))
+      throw new Error('CLOUD_ROUTER_TOOL_DENIED');
     const broker=this.manager.broker;
     if(name==='get_harness_status'){
       if(Object.keys(args).length)throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
@@ -229,29 +238,37 @@ class CloudRouterService {
       return broker?.toolCall ? broker.toolCall(name,args) : this.manager.call(name,args);
     }
     const keys=name==='get_tool_result_page'
-      ? ['result_id','offset','length']:['result_id','file_index'];
-    if(!Object.keys(args).every(key=>keys.includes(key)) ||
-       typeof args.result_id!=='string' || !/^result_[a-f0-9]{32}$/.test(args.result_id) ||
-       name==='get_tool_result_page'&&
-         (args.offset!==undefined&&(!Number.isSafeInteger(args.offset)||args.offset<0) ||
-          args.length!==undefined&&(!Number.isSafeInteger(args.length)||args.length<4||args.length>4096)) ||
-       name==='get_tool_result_file'&&(!Number.isSafeInteger(args.file_index)||args.file_index<0))
-      throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
-    if(!broker?.results?.load||!broker?.toolCall)throw new Error('CLOUD_ROUTER_TOOL_UNAVAILABLE');
-    // Never let a cloud result ID read saved local shell, file, or other MCP
-    // results. Only the explicitly remote-allowed status tool may be paged.
-    let record;
-    try{record=await broker.results.load(args.result_id);}
-    catch{return broker.toolCall(name,args);}
-    if(record.source.tool!=='get_harness_status')
-      throw new Error('CLOUD_ROUTER_TOOL_DENIED');
-    return broker.toolCall(name,args);
+      ? ['result_id','offset','length']:name==='get_tool_result_file'
+        ? ['result_id','file_index']:null;
+    if(keys){
+      if(!Object.keys(args).every(key=>keys.includes(key)) ||
+         typeof args.result_id!=='string' || !/^result_[a-f0-9]{32}$/.test(args.result_id) ||
+         name==='get_tool_result_page'&&
+           (args.offset!==undefined&&(!Number.isSafeInteger(args.offset)||args.offset<0) ||
+            args.length!==undefined&&(!Number.isSafeInteger(args.length)||args.length<4||args.length>4096)) ||
+         name==='get_tool_result_file'&&(!Number.isSafeInteger(args.file_index)||args.file_index<0))
+        throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
+      if(!broker?.results?.load||!broker?.toolCall)throw new Error('CLOUD_ROUTER_TOOL_UNAVAILABLE');
+      // Never let a cloud result ID read saved local shell, file, or other MCP
+      // results. Only the explicitly remote-allowed status tool may be paged.
+      let record;
+      try{record=await broker.results.load(args.result_id);}
+      catch{return broker.toolCall(name,args);}
+      if(record.source.tool!=='get_harness_status')
+        throw new Error('CLOUD_ROUTER_TOOL_DENIED');
+      return broker.toolCall(name,args);
+    }
+    // This path deliberately goes through McpManager.call so existing local
+    // service trust, tool policy, project grants and approval prompts remain active.
+    return this.manager.call(name,args);
   }
   status() {
     return {paused:this.paused,enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,
       connected: Boolean(this.agent?.connected), device_id: this.identity.id,
       device_name: this.identity.name, platform: this.identity.platform,
       local_harness_version:LOCAL_VERSION, local_os_version:this.localOsVersion,
+      tool_catalog_version:(()=>{try{return this.catalog().version;}catch{return '';}})(),
+      tool_catalog_count:(()=>{try{return this.catalog().tools.length;}catch{return 0;}})(),
       paired:Boolean(this.mcpUrl),...(this.mcpUrl?{mcp_url:this.mcpUrl}:{}),
       devices:this.devices,devicesUpdatedAt:this.devicesUpdatedAt,
       devicesError:this.devicesError,devicesRefreshing:this.devicesRefreshing,

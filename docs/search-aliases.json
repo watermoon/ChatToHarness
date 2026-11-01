@@ -8,5 +8,6 @@
   "editing":{"zh-CN":["撤回","恢复文件","回滚","写入","追加"],"en":["undo","revert","append","write"],"ja":["元に戻す","取り消す","追記","書き込み"]},
   "reading":{"zh-CN":["Excel","Word","PDF","图片","表格"],"en":["Excel","Word","PDF","images","spreadsheet"],"ja":["Excel","Word","PDF","画像","表計算"]},
   "preferences":{"zh-CN":["托盘","菜单栏","关窗口","切换语言"],"en":["tray","menu bar","language","close window"],"ja":["トレイ","メニューバー","表示言語","閉じる"]},
-  "import-export":{"zh-CN":["配置迁移","复制配置","换电脑"],"en":["migration","copy settings","new computer"],"ja":["設定移行","コピー","別のパソコン"]}
+  "import-export":{"zh-CN":["配置迁移","复制配置","换电脑"],"en":["migration","copy settings","new computer"],"ja":["設定移行","コピー","別のパソコン"]},
+  "hardware-inspection":{"zh-CN":["USB设备","PnP设备","串口","COM端口","硬件枚举"],"en":["USB devices","PnP devices","serial ports","COM ports","hardware inventory"],"ja":["USBデバイス","PnPデバイス","シリアルポート","COMポート","ハードウェア確認"]}
 }

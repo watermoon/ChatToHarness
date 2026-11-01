@@ -59,9 +59,79 @@ async function equalSecret(actual, expected) {
   return diff === 0;
 }
 function getHub(env) { return env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName('default')); }
+const MAX_CATALOG_TOOLS = 128;
+const MAX_CATALOG_BYTES = 192 * 1024;
+const MAX_TOOL_BYTES = 16 * 1024;
+const DENIED_REMOTE_TOOLS = new Set([
+  'computer_use','start_process','start_task','interact_with_process','write_file','write_pdf',
+  'edit_block','apply_project_edit','undo_project_edit','move_file','create_directory',
+  'force_terminate','kill_process','set_config_value','cancel_task','stop_search',
+  'give_feedback_to_desktop_commander','get_config','get_recent_tool_calls','read_process_output'
+]);
+const SAFE_ANNOTATIONS = {readOnlyHint:true,destructiveHint:false,openWorldHint:false};
+const LEGACY_CATALOG = Object.freeze({
+  schema_version:1,
+  version:'0000000000000000000000000000000000000000000000000000000000000000',
+  tools:[
+    {name:'get_harness_status',description:'Read Harness status and bounded tool inventory.',
+      inputSchema:{type:'object',properties:{cursor:{type:'string'},limit:{type:'integer',minimum:1,maximum:200}},additionalProperties:false},
+      annotations:{...SAFE_ANNOTATIONS,idempotentHint:true}},
+    {name:'get_tool_result_page',description:'Read a saved page from get_harness_status.',
+      inputSchema:{type:'object',properties:{result_id:{type:'string'},offset:{type:'integer',minimum:0},length:{type:'integer',minimum:4,maximum:4096}},required:['result_id'],additionalProperties:false},
+      annotations:{...SAFE_ANNOTATIONS,idempotentHint:true}},
+    {name:'get_tool_result_file',description:'Read a saved result file from get_harness_status.',
+      inputSchema:{type:'object',properties:{result_id:{type:'string'},file_index:{type:'integer',minimum:0}},required:['result_id','file_index'],additionalProperties:false},
+      annotations:{...SAFE_ANNOTATIONS,idempotentHint:true}}
+  ]
+});
+function deniedRemoteName(name) {
+  const bare=String(name||'').split('__').pop();
+  return DENIED_REMOTE_TOOLS.has(bare);
+}
+async function validateCatalog(value) {
+  // Keep the exact pre-catalog protocol snapshot available for older paired agents.
+  if (value?.version===LEGACY_CATALOG.version &&
+      JSON.stringify(value)===JSON.stringify(LEGACY_CATALOG)) return LEGACY_CATALOG;
+  if (!value || value.schema_version!==1 || !/^[a-f0-9]{64}$/.test(value.version||'') ||
+      !Array.isArray(value.tools) || value.tools.length>MAX_CATALOG_TOOLS) return null;
+  const names=new Set(), tools=[];
+  for (const item of value.tools) {
+    if (!item || typeof item!=='object' || !ID.test(item.name||'') || names.has(item.name) ||
+        deniedRemoteName(item.name)) return null;
+    const hints=item.annotations;
+    const schema=item.inputSchema;
+    if (hints?.readOnlyHint!==true || hints?.destructiveHint!==false || hints?.openWorldHint!==false ||
+        !schema || typeof schema!=='object' || Array.isArray(schema) || schema.type!=='object' ||
+        !schema.properties || typeof schema.properties!=='object' || Array.isArray(schema.properties) ||
+        typeof item.description!=='string' || item.description.length>2048) return null;
+    const tool={name:item.name,description:item.description,inputSchema:schema,
+      annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:hints.idempotentHint===true,openWorldHint:false}};
+    if (new TextEncoder().encode(JSON.stringify(tool)).length>MAX_TOOL_BYTES) return null;
+    names.add(item.name);tools.push(tool);
+  }
+  const serialized=JSON.stringify({schema_version:1,tools});
+  if (new TextEncoder().encode(serialized).length>MAX_CATALOG_BYTES) return null;
+  const digest=await globalThis.crypto.subtle.digest('SHA-256',new TextEncoder().encode(serialized));
+  const version=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+  if (version!==value.version) return null;
+  return {schema_version:1,version,tools};
+}
+function pageCatalog(catalog,cursor,limit) {
+  const count=limit===undefined?32:Number(limit);
+  if (!Number.isSafeInteger(count)||count<1||count>64) return null;
+  let offset=0;
+  if(cursor!==undefined){
+    const match=/^(?<version>[a-f0-9]{64}):(?<offset>\d+)$/.exec(String(cursor));
+    if(!match||match.groups.version!==catalog.version||Number(match.groups.offset)>=catalog.tools.length)return null;
+    offset=Number(match.groups.offset);
+  }
+  const tools=catalog.tools.slice(offset,offset+count),next=offset+tools.length;
+  return {schema_version:1,catalog_version:catalog.version,tools,
+    ...(next<catalog.tools.length?{next_cursor:`${catalog.version}:${next}`}:{})};
+}
 function allowedTools(env) {
-  const raw = String(env.ALLOWED_TOOLS || 'get_harness_status,get_tool_result_page,get_tool_result_file');
-  return new Set(raw.split(',').map(x => x.trim()).filter(Boolean));
+  const raw = String(env.ALLOWED_TOOLS || '').trim();
+  return raw ? new Set(raw.split(',').map(x => x.trim()).filter(Boolean)) : null;
 }
 const registered = ws => {
   const x = ws.deserializeAttachment?.();
@@ -151,15 +221,40 @@ export class DeviceHub {
           typeof item.name!=='string' || typeof item.platform!=='string') continue;
         devices.push({device_id:key.slice(7),name:item.name,platform:item.platform,
           online:online.has(key.slice(7)),harness_version:item.harness_version||'',
-          os_version:item.os_version||'',paired_at:item.paired_at||null});
+          os_version:item.os_version||'',paired_at:item.paired_at||null,
+          catalog_version:item.catalog_version||'',catalog_count:Number.isSafeInteger(item.catalog_count)?item.catalog_count:0});
       }
       return json(devices.sort((a,b)=>a.device_id.localeCompare(b.device_id)));
+    }
+    if (pathname === '/catalog') {
+      if (req.method !== 'POST') return new Response('Method not allowed',{status:405});
+      const input=await req.json().catch(()=>null);
+      if(!input||!ID.test(input.device_id||'')||
+         input.cursor!==undefined&&typeof input.cursor!=='string')
+        return json(error('BAD_REQUEST','Explicit device_id and optional catalog cursor required'),400);
+      const stored=await this.ctx.storage.get('catalog:'+input.device_id);
+      const catalog=stored===undefined?LEGACY_CATALOG:await validateCatalog(stored);
+      if(!catalog)return json(error('DEVICE_CATALOG_UNAVAILABLE','The device has not published a valid catalog'),503);
+      const page=pageCatalog(catalog,input.cursor,input.limit);
+      if(!page)return json(error('CATALOG_CURSOR_EXPIRED','Catalog cursor or page size is invalid'),409);
+      return json({ok:true,device_id:input.device_id,online:Boolean(currentSocket(this.ctx,input.device_id)),...page});
     }
     if (pathname === '/invoke') {
       const input = await req.json().catch(() => null);
       if (!input || !ID.test(input.device_id || '') || !ID.test(input.tool_name || '') ||
-          !input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))
+          !input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments) ||
+          input.catalog_version!==undefined&&!/^[a-f0-9]{64}$/.test(input.catalog_version))
         return json(error('BAD_REQUEST', 'Explicit device_id, tool_name and object arguments required'), 400);
+      const stored=await this.ctx.storage.get('catalog:'+input.device_id);
+      const catalog=stored===undefined?LEGACY_CATALOG:await validateCatalog(stored);
+      if(!catalog)return json(error('DEVICE_CATALOG_UNAVAILABLE','The device has not published a valid catalog'),503);
+      if(input.catalog_version&&input.catalog_version!==catalog.version)
+        return json(error('CATALOG_VERSION_STALE','Refresh list_device_tools before invoking this tool'),409);
+      if(!catalog.tools.some(tool=>tool.name===input.tool_name))
+        return json(error('TOOL_DENIED','Tool is not present in the selected device catalog'),403);
+      const cap=allowedTools(this.env);
+      if(cap&&!cap.has(input.tool_name))
+        return json(error('TOOL_DENIED','Tool is not permitted by the cloud policy'),403);
       const ws = currentSocket(this.ctx, input.device_id);
       if (!ws) return json(error('DEVICE_OFFLINE', 'Selected device is not connected'), 503);
       const requestId = crypto.randomUUID();
@@ -170,7 +265,8 @@ export class DeviceHub {
           resolve(json(error('EXECUTION_UNKNOWN', 'Device response timed out; do not automatically retry'), 504));
         }, ms);
         this.pending.set(requestId, {ws, resolve, timeout});
-        try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name, arguments: input.arguments})); }
+        try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name,
+          catalog_version:catalog.version, arguments: input.arguments})); }
         catch {
           clearTimeout(timeout); this.pending.delete(requestId);
           resolve(json(error('EXECUTION_UNKNOWN', 'Transport failed; execution state unknown'), 502));
@@ -192,6 +288,8 @@ export class DeviceHub {
       }
       // Only cloud-issued, device-bound credentials are accepted.
       if (!await verifyDevice(this.ctx,item.device_id,item.token)) { ws.close(1008, 'Unauthorized device'); return; }
+      const catalog=item.catalog===undefined?LEGACY_CATALOG:await validateCatalog(item.catalog);
+      if(!catalog){ws.close(1008,'Invalid tool catalog');return;}
       const old = currentSocket(this.ctx, item.device_id);
       if (old && old !== ws) {
         this.failPending(old, 'DEVICE_DISCONNECTED');
@@ -206,17 +304,33 @@ export class DeviceHub {
            /[\x00-\x1f]/.test(item.os_version))){
         ws.close(1008,'Invalid OS version');return;
       }
-      if(item.harness_version||item.os_version){
-        const original=await this.ctx.storage.get('device:'+item.device_id);
-        if(original)await this.ctx.storage.put('device:'+item.device_id,{
-          ...original,
-          ...(item.harness_version?{harness_version:item.harness_version}:{}),
-          ...(item.os_version?{os_version:item.os_version}:{})
-        });
+      await this.ctx.storage.put('catalog:'+item.device_id,catalog);
+      const original=await this.ctx.storage.get('device:'+item.device_id);
+      if(original)await this.ctx.storage.put('device:'+item.device_id,{
+        ...original,
+        ...(item.harness_version?{harness_version:item.harness_version}:{}),
+        ...(item.os_version?{os_version:item.os_version}:{}),
+        catalog_version:catalog.version,catalog_count:catalog.tools.length
+      });
+      ws.serializeAttachment({authenticated:true,device_id:item.device_id,
+        name:item.name,platform:item.platform,catalog_version:catalog.version});
+      ws.send(JSON.stringify({type:'registered',device_id:item.device_id,catalog_version:catalog.version}));
+      return;
+    }
+    if(item?.type==='catalog_update'){
+      if(currentSocket(this.ctx,reg.device_id)!==ws)return;
+      const catalog=await validateCatalog(item.catalog);
+      if(!catalog){
+        ws.send(JSON.stringify({type:'catalog_rejected',code:'CATALOG_INVALID'}));
+        return;
       }
-      ws.serializeAttachment({authenticated: true, device_id: item.device_id,
-        name: item.name, platform: item.platform});
-      ws.send(JSON.stringify({type: 'registered', device_id: item.device_id}));
+      await this.ctx.storage.put('catalog:'+reg.device_id,catalog);
+      const original=await this.ctx.storage.get('device:'+reg.device_id);
+      if(original)await this.ctx.storage.put('device:'+reg.device_id,{
+        ...original,catalog_version:catalog.version,catalog_count:catalog.tools.length
+      });
+      ws.serializeAttachment({...reg,catalog_version:catalog.version});
+      ws.send(JSON.stringify({type:'catalog_ack',catalog_version:catalog.version}));
       return;
     }
     if (item?.type !== 'result' || typeof item.request_id !== 'string') return;
@@ -251,10 +365,18 @@ const tools = [
   {name: 'get_tool_result_file', description: 'Read one deferred result file on an explicitly selected device without repeating the original tool call.',
     annotations: {readOnlyHint:true,destructiveHint:false,idempotentHint:true},
     inputSchema: {type:'object',additionalProperties:false,required:['device_id','result_id','file_index'],properties:{device_id:{type:'string'},result_id:{type:'string'},file_index:{type:'integer',minimum:0}}}},
-  {name: 'call_device_tool', description: 'Invoke a configured read-only tool on one explicitly selected device. Never silently substitute a different device.',
-    inputSchema: {type: 'object', additionalProperties: false, required: ['device_id','tool_name','arguments'],
+  {name:'list_device_tools',description:'List the current remote-safe MCP tool catalog for one explicitly selected device. Returns catalog version and pagination cursor.',
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+    inputSchema:{type:'object',additionalProperties:false,required:['device_id'],
+      properties:{device_id:{type:'string',description:'Device ID returned by list_devices'},
+        cursor:{type:'string',description:'Opaque next_cursor from the previous page'},
+        limit:{type:'integer',minimum:1,maximum:64,default:32}}}},
+  {name: 'call_device_tool', description: 'Invoke a tool present in the selected device current remote-safe catalog. Never silently substitute a different device.',
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:false,openWorldHint:false},
+    inputSchema: {type: 'object', additionalProperties: false, required: ['device_id','tool_name','catalog_version','arguments'],
       properties: {device_id: {type: 'string', description: 'Device ID returned by list_devices'},
-        tool_name: {type: 'string', description: 'Name of allowed local tool'},
+        tool_name: {type: 'string', description: 'Tool name from list_device_tools'},
+        catalog_version: {type:'string',pattern:'^[a-f0-9]{64}$',description:'Catalog version returned by list_device_tools; refresh the catalog if stale'},
         arguments: {type: 'object', additionalProperties: true}}}}
 ];
 // This dispatcher is never a public Worker entrypoint. OAuthResourceServer must authenticate it.
@@ -292,6 +414,20 @@ export const authorizedWorker = {
       const upstream = await getHub(env).fetch('https://hub.internal/devices');
       return json(rpc(id, textResult(await upstream.json())));
     }
+    if (name === 'list_device_tools') {
+      const allowedKeys=['device_id','cursor','limit'];
+      if(!args||typeof args!=='object'||Array.isArray(args)||
+         !Object.keys(args).every(key=>allowedKeys.includes(key))||
+         !ID.test(args.device_id||'')||
+         args.cursor!==undefined&&typeof args.cursor!=='string'||
+         args.limit!==undefined&&(!Number.isSafeInteger(args.limit)||args.limit<1||args.limit>64))
+        return json(rpc(id,{isError:true,...textResult(error('BAD_REQUEST','Explicit device_id and valid catalog page options required'))}));
+      const upstream=await getHub(env).fetch(new Request('https://hub.internal/catalog',{
+        method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(args)
+      }));
+      const answer=await upstream.json();
+      return json(rpc(id,{...textResult(answer),structuredContent:answer,...(answer.ok===true?{}:{isError:true})}));
+    }
     if (name === 'inspect_client_context') {
       if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length)
         return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'No arguments accepted'))}));
@@ -305,10 +441,12 @@ export const authorizedWorker = {
         ? {result_id:args?.result_id,...(args?.offset===undefined?{}:{offset:args.offset}),...(args?.length===undefined?{}:{length:args.length})}
         : {result_id:args?.result_id,file_index:args?.file_index}};
     if (!routed || !ID.test(routed.device_id || '') || !ID.test(routed.tool_name || '') ||
-        !routed.arguments || typeof routed.arguments !== 'object' || Array.isArray(routed.arguments))
-      return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'Explicit device_id/tool_name/arguments required'))}));
-    if (!allowedTools(env).has(routed.tool_name))
-      return json(rpc(id, {isError: true, ...textResult(error('TOOL_DENIED', 'Tool not permitted by cloud allowlist'))}));
+        !routed.arguments || typeof routed.arguments !== 'object' || Array.isArray(routed.arguments) ||
+        name==='call_device_tool'&&!/^[a-f0-9]{64}$/.test(routed.catalog_version||''))
+      return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'Explicit device_id/tool_name/catalog_version/arguments required'))}));
+    const cloudCap=allowedTools(env);
+    if (cloudCap && !cloudCap.has(routed.tool_name))
+      return json(rpc(id, {isError: true, ...textResult(error('TOOL_DENIED', 'Tool not permitted by cloud policy'))}));
     const upstream = await getHub(env).fetch(new Request('https://hub.internal/invoke', {method: 'POST',
       body: JSON.stringify(routed),
       headers: {'content-type': 'application/json'}}));

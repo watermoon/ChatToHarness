@@ -1,10 +1,20 @@
 'use strict';
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
+const {createHash} = require('node:crypto');
 const {resolve} = require('node:path');
 const {pathToFileURL} = require('node:url');
 const workerUrl = pathToFileURL(resolve(__dirname, '../cloud-router/src/worker.mjs')).href;
 const TOKEN = 'abcdefghij1234567890abcdefghijklmnop';
+function catalog(names) {
+  const tools=names.map(name=>({
+    name,description:`Read ${name}`,
+    inputSchema:{type:'object',properties:{},additionalProperties:false},
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}
+  }));
+  const version=createHash('sha256').update(JSON.stringify({schema_version:1,tools})).digest('hex');
+  return {schema_version:1,version,tools};
+}
 class Socket {
   constructor() { this.readyState = 1; this.messages = []; }
   serializeAttachment(v) { this.attachment = v; }
@@ -20,7 +30,7 @@ async function fixture() {
     list({prefix,limit}){return Promise.resolve(new Map([...this.items].filter(([k])=>k.startsWith(prefix)).slice(0,limit)));},
     transaction(fn){return fn(this);}};
   const ctx={storage,getWebSockets: () => sockets,acceptWebSocket: ws => sockets.push(ws)};
-  const env = {MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,git_status'};
+  const env = {MCP_BEARER_TOKEN: TOKEN, ALLOWED_TOOLS: 'get_harness_status,get_tool_result_page,get_tool_result_file,list_usb_devices,list_pnp_devices,list_serial_ports,get_pnp_device_details'};
   const hub = new DeviceHub(ctx,env), tokens=new Map();
   env.DEVICE_HUB = {idFromName: n => n, get: () => ({fetch: req => hub.fetch(typeof req === 'string' ? new Request(req) : req)})};
   const register = async (device_id, name = device_id, invalidToken = null, metadata = {}) => {
@@ -52,7 +62,7 @@ test('internal MCP dispatcher exposes only router tools (external auth is mandat
   const init = await f.mcp('initialize', {});
   assert.equal(init.body.result.serverInfo.name, 'chattoharness-cloud-router');
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),
-    ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','call_device_tool']);
+    ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','list_device_tools','call_device_tool']);
 });
 test('devices are independently authenticated and listed', async () => {
   const f = await fixture();
@@ -63,13 +73,70 @@ test('devices are independently authenticated and listed', async () => {
   assert.equal(moon.messages[0].type, 'registered');
   const devices = JSON.parse((await f.mcp('tools/call',{name: 'list_devices'})).body.result.content[0].text);
   assert.deepEqual(devices.map(x => x.device_id), ['mac','moon']);
+  const legacyCatalog=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'moon',limit:10}});
+  assert.deepEqual(legacyCatalog.body.result.structuredContent.tools.map(x=>x.name),[
+    'get_harness_status','get_tool_result_page','get_tool_result_file'
+  ]);
+});
+test('device catalogs are isolated and generic calls require catalog membership',async()=>{
+  const f=await fixture();
+  const moonCatalog=catalog(['list_usb_devices']);
+  const macCatalog=catalog(['list_serial_ports']);
+  const moon=await f.register('moon','MOON',null,{catalog:moonCatalog});
+  const mac=await f.register('mac','MacBook',null,{catalog:macCatalog});
+  const moonPage=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'moon',limit:10}});
+  const macPage=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'mac',limit:10}});
+  assert.equal(moonPage.body.result.structuredContent.catalog_version,moonCatalog.version);
+  assert.deepEqual(moonPage.body.result.structuredContent.tools.map(x=>x.name),['list_usb_devices']);
+  assert.deepEqual(macPage.body.result.structuredContent.tools.map(x=>x.name),['list_serial_ports']);
+  const denied=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'moon',tool_name:'list_serial_ports',catalog_version:moonCatalog.version,arguments:{}}});
+  assert.equal(JSON.parse(denied.body.result.content[0].text).code,'TOOL_DENIED');
+  assert.equal(moon.messages.length,1);
+  const call=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'moon',tool_name:'list_usb_devices',catalog_version:moonCatalog.version,arguments:{}}});
+  for(let i=0;i<200&&moon.messages.length<2;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(moon.messages.length,2);
+  assert.equal(mac.messages.length,1);
+  assert.equal(moon.messages[1].catalog_version,moonCatalog.version);
+  const id=moon.messages[1].request_id;
+  await f.hub.webSocketMessage(moon,JSON.stringify({type:'result',request_id:id,result:{device:'moon'}}));
+  assert.deepEqual(JSON.parse((await call).body.result.content[0].text),{device:'moon'});
+});
+test('catalog updates replace the snapshot atomically and reject stale calls',async()=>{
+  const f=await fixture();
+  const first=catalog(['list_usb_devices']);
+  const ws=await f.register('moon','MOON',null,{catalog:first});
+  const next=catalog(['list_serial_ports','list_pnp_devices']);
+  await f.hub.webSocketMessage(ws,JSON.stringify({type:'catalog_update',catalog:next}));
+  assert.deepEqual(ws.messages.at(-1),{type:'catalog_ack',catalog_version:next.version});
+  const page=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'moon',limit:1}});
+  assert.equal(page.body.result.structuredContent.catalog_version,next.version);
+  assert.ok(page.body.result.structuredContent.next_cursor);
+  const second=await f.mcp('tools/call',{name:'list_device_tools',arguments:{
+    device_id:'moon',limit:1,cursor:page.body.result.structuredContent.next_cursor}});
+  assert.deepEqual(second.body.result.structuredContent?.tools?.map(x=>x.name),['list_pnp_devices'],JSON.stringify(second.body));
+  const stale=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'moon',tool_name:'list_usb_devices',catalog_version:first.version,arguments:{}}});
+  assert.equal(JSON.parse(stale.body.result.content[0].text).code,'CATALOG_VERSION_STALE');
+  assert.equal(ws.messages.length,2);
+  const invalid=catalog(['write_file']);
+  invalid.tools[0].annotations={readOnlyHint:false,destructiveHint:true,openWorldHint:false};
+  await f.hub.webSocketMessage(ws,JSON.stringify({type:'catalog_update',catalog:invalid}));
+  assert.equal(ws.messages.at(-1).code,'CATALOG_INVALID');
+  const wrongHash=catalog(['list_usb_devices']);
+  wrongHash.version='f'.repeat(64);
+  await f.hub.webSocketMessage(ws,JSON.stringify({type:'catalog_update',catalog:wrongHash}));
+  assert.equal(ws.messages.at(-1).code,'CATALOG_INVALID');
+  const stillNext=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'moon',limit:10}});
+  assert.equal(stillNext.body.result.structuredContent.catalog_version,next.version);
 });
 test('one MCP endpoint dispatches to the explicitly requested device only', async () => {
   const f = await fixture();
   const moon = await f.register('moon');
   const mac = await f.register('mac');
   const call = f.mcp('tools/call', {name: 'call_device_tool', arguments: {
-    device_id: 'mac', tool_name: 'get_harness_status', arguments: {}}});
+    device_id: 'mac', tool_name: 'get_harness_status', catalog_version:'0'.repeat(64), arguments: {}}});
   for (let i = 0; i < 200 && mac.messages.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(moon.messages.length, 1); // registration only
   assert.equal(mac.messages.length, 2);
@@ -83,7 +150,7 @@ test('unknown/offline target cannot fail over, and tools require cloud allowlist
   await f.register('moon');
   async function call(device_id, tool_name) {
     const v = await f.mcp('tools/call', {name: 'call_device_tool',
-      arguments: {device_id, tool_name, arguments: {}}});
+      arguments: {device_id, tool_name, catalog_version:'0'.repeat(64), arguments: {}}});
     return JSON.parse(v.body.result.content[0].text).code;
   }
   assert.equal(await call('mac', 'get_harness_status'), 'DEVICE_OFFLINE');
@@ -95,7 +162,7 @@ test('disconnect reports unknown execution, never replays on other device', asyn
   const moon = await f.register('moon');
   const mac = await f.register('mac');
   const call = f.mcp('tools/call', {name: 'call_device_tool', arguments: {
-    device_id: 'moon', tool_name: 'get_harness_status', arguments: {}}});
+    device_id: 'moon', tool_name: 'get_harness_status', catalog_version:'0'.repeat(64), arguments: {}}});
   for (let i = 0; i < 200 && moon.messages.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(moon.messages.length, 2, 'dispatch was sent before disconnect');
   f.hub.webSocketClose(moon);

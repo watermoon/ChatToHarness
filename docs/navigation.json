@@ -7,7 +7,7 @@
     {"id":"everyday","labels":{"en":"Everyday work","zh-CN":"日常协作","ja":"日常の作業"},"articles":["files","reading","editing","search","project-git","terminal","background-tasks","artifacts"]},
     {"id":"settings","labels":{"en":"Connections & settings","zh-CN":"连接和设置","ja":"接続と設定"},"articles":["connection-status","work-directories","credentials","preferences"]},
     {"id":"extensions","labels":{"en":"External tools","zh-CN":"扩展工具","ja":"外部ツール"},"articles":["local-services","remote-services","service-trust","tool-permissions","manage-services","import-export","resources-prompts"]},
-    {"id":"records","labels":{"en":"Logs & records","zh-CN":"日志和记录","ja":"ログと実行履歴"},"articles":["live-logs","execution-records","diagnostics"]},
+    {"id":"records","labels":{"en":"Logs & records","zh-CN":"日志和记录","ja":"ログと実行履歴"},"articles":["live-logs","execution-records","diagnostics","hardware-inspection"]},
     {"id":"problems","labels":{"en":"Fix a problem","zh-CN":"解决问题","ja":"問題を解決する"},"articles":["installation-problems","connection-problems","missing-tools","permission-problems","uncertain-results","faq"]},
     {"id":"updates","labels":{"en":"Updates & privacy","zh-CN":"更新与隐私","ja":"更新とプライバシー"},"articles":["updates","privacy"]}
   ],

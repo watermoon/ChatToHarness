@@ -51,6 +51,7 @@
 - [View and filter live logs](live-logs.md)
 - [Find and understand execution history](execution-records.md)
 - [Collect diagnostics, copy details and export records](diagnostics.md)
+- [Inspect USB, PnP and serial devices](hardware-inspection.md)
 
 ## Fix a problem
 

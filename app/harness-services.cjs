@@ -11,6 +11,7 @@ const {ProjectInspector, integer, fail} = require('./project-inspect.cjs');
 const {guidanceRetry,scopeRecovery} = require('./tool-recovery.cjs');
 const {sanitize} = require('./diagnostic-budget.cjs');
 const {connectionDiagnostics} = require('./live-logs.cjs');
+const {WindowsHardwareInspector,HARDWARE_TOOLS} = require('./windows-hardware-inspection.cjs');
 
 const DC_TOOLS = Object.freeze(['get_config', 'set_config_value', 'read_file', 'read_multiple_files', 'write_file', 'write_pdf', 'create_directory', 'list_directory', 'move_file', 'start_search', 'get_more_search_results', 'stop_search', 'list_searches', 'get_file_info', 'edit_block', 'start_process', 'read_process_output', 'interact_with_process', 'force_terminate', 'list_sessions', 'list_processes', 'kill_process', 'get_usage_stats', 'get_recent_tool_calls', 'give_feedback_to_desktop_commander']);
 const project = {type: 'string', description: 'Absolute project directory within the desktop app authorized folders.'};
@@ -37,6 +38,10 @@ const EDIT_TOOLS = [
 ];
 const TOOLS = [
   tool('get_harness_status', 'Harness status', 'Diagnose ChatToHarness connection/reconnect problems: returns current state and bounded saved connection events/retry delays, without a log path. Do not guess OS log folders or request access to app storage. Also returns the running build, device and capability inventory; tool names are paginated.', {...pagination}),
+  tool('list_usb_devices','USB devices','Enumerate present USB PnP devices with bounded VID/PID, manufacturer, status and instance IDs. Does not open or access device data.',{limit:{type:'integer',minimum:1,maximum:200,default:100}},[],readHints),
+  tool('list_pnp_devices','PnP devices','Enumerate present USB, Ports and HID-related PnP devices with bounded identity and status fields.',{limit:{type:'integer',minimum:1,maximum:200,default:100}},[],readHints),
+  tool('list_serial_ports','Serial ports','Enumerate COM port names and correlate each port with its PnP instance ID and VID/PID. Does not open or read port data.',{limit:{type:'integer',minimum:1,maximum:128,default:64}},[],readHints),
+  tool('get_pnp_device_details','PnP device details','Read an allowlisted set of identity, parent, service, driver and location properties for one exact PnP instance ID.',{instance_id:{type:'string',minLength:1,maxLength:512}},['instance_id'],readHints),
   tool('get_project_overview', 'Project overview', 'Read a bounded directory summary, Git status, AGENTS and on-demand rule/skill indexes in one call.', {project_path: project, depth: {type: 'integer', minimum: 1, maximum: 3}, target_paths: {type: 'array', items: {type: 'string'}, maxItems: 128}, task: {type: 'string', maxLength: 4096}}, ['project_path']),
   tool('get_execution_summary', 'Project execution summary', 'Preferred for ChatToHarness tool/error logs: read project execution states, durations, error reasons and saved result references without locating log files. Use state:errors for failures; include_connection:true adds bounded application-wide connection events filtered by since. state/tool filter execution records only. Commands, arguments and full output are excluded; use the original task_id to inspect work without replaying it.', {project_path:project,state:{type:'string',enum:['all','errors','received','waiting_approval','submitted','running','cancelling','succeeded','failed','unknown','interrupted','needs_context','needs_arguments']},tool:{type:'string',maxLength:256},since:{type:'string',description:'ISO date-time lower bound for when a request was received.'},include_connection:{type:'boolean',description:'Include bounded app connection/reconnect events, with no raw log access. These events are application-wide, not project execution records.'},cursor:{type:'string'},limit:{type:'integer',minimum:1,maximum:50,default:10}}, ['project_path']),
   ...['status', 'diff', 'log'].map(kind => tool(`git_${kind}`, `Git ${kind}`, `Read project-scoped Git ${kind} without a shell. Result pages use a five-minute immutable snapshot. Diff defaults to unstaged changes; log covers up to 100 commits.`, {project_path: project, paths: {type: 'array', items: {type: 'string'}, maxItems: 64}, ...(kind === 'diff' ? {staged: {type: 'boolean'}} : {}), ...pagination}, ['project_path'])),
@@ -48,8 +53,8 @@ function errorResult(error,name,args) {
   return {...response(value), isError: true};
 }
 class HarnessServices {
-  constructor({home, build = {}, versions = {}, runtime = () => ({}), catalog = () => [], mcp = () => ({}), computerUse = null, nodePath = process.execPath, processHost, engineEntry, configHome, history} = {}) {
-    Object.assign(this, {home, build, versions, runtime, catalog, mcp, computerUse, nodePath, processHost, history});
+  constructor({home, build = {}, versions = {}, runtime = () => ({}), catalog = () => [], mcp = () => ({}), computerUse = null, hardwareInspector = new WindowsHardwareInspector(), nodePath = process.execPath, processHost, engineEntry, configHome, history} = {}) {
+    Object.assign(this, {home, build, versions, runtime, catalog, mcp, computerUse, hardwareInspector, nodePath, processHost, history});
     this.edits = new SafeEdits(home);
     this.tasks = new TaskStore({home,nodePath,processHost,engineEntry,configHome});
     this.configure({directories: []});
@@ -70,6 +75,7 @@ class HarnessServices {
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_ARGUMENT', 'Tool arguments must be an object.');
       options.signal?.throwIfAborted();
       if (name === 'get_harness_status') return response(this.status(args));
+      if (HARDWARE_TOOLS.has(name)) return response(await this.hardwareInspector.call(name,args));
       if (name === 'computer_use' && this.computerUse?.definition()) return await this.computerUse.call(require('./computer-use-compat.cjs').withLegacySessionTitle(args), options);
       if (!this.directories.length) throw fail('PATH_NOT_ALLOWED', 'Choose a project folder in the desktop app before using project tools.');
       if (EDIT_TOOLS.some(tool => tool.name === name)) return response(await this.edit(name,args,options));

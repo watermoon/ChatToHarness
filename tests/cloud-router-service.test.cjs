@@ -13,11 +13,22 @@ class Socket {
   open(){this.readyState=1;this.emit('open');}
   message(m){this.emit('message',{data:JSON.stringify(m)});}
 }
+function safeTool(name,annotations={readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}) {
+  return {name,description:name,inputSchema:{type:'object',properties:{},additionalProperties:false},annotations};
+}
 function fixture() {
-  const calls=[];
-  const manager={call:async(name,args)=>{calls.push([name,args]);return {content:[{type:'text',text:'ready'}]};}};
+  const calls=[],listeners=new Map();
+  const definitions=[safeTool('get_harness_status'),safeTool('read_inventory'),
+    safeTool('write_file',{readOnlyHint:false,destructiveHint:true,openWorldHint:false})];
+  const manager={
+    call:async(name,args)=>{calls.push([name,args]);return {content:[{type:'text',text:'ready'}]};},
+    visibleTools:()=>definitions,
+    on(event,listener){const list=listeners.get(event)||[];list.push(listener);listeners.set(event,list);return this;},
+    emit(event){for(const listener of listeners.get(event)||[])listener();},
+    broker:{results:{tools:()=>[safeTool('get_tool_result_page'),safeTool('get_tool_result_file')]}}
+  };
   const service=new CloudRouterService({manager,identity:{id:'cu-00000000-0000-4000-8000-000000000001',name:'Mac',platform:'darwin'},WebSocketImpl:Socket});
-  return {service,calls};
+  return {service,calls,manager,definitions};
 }
 test('cloud router is disabled by default and never replaces the Tunnel',()=>{
   const {service}=fixture();
@@ -41,19 +52,45 @@ test('the device registers its stable local identity and calls existing manager 
   assert.equal(socket.sent[0].harness_version,require('../package.json').version);
   assert.equal(typeof socket.sent[0].os_version,'string');
   assert.ok(socket.sent[0].os_version.length>0);
-  socket.message({type:'registered',device_id:socket.sent[0].device_id});
+  socket.message({type:'registered',device_id:socket.sent[0].device_id,catalog_version:socket.sent[0].catalog.version});
   assert.equal(service.status().connected,true);
-  socket.message({type:'invoke',request_id:'1',tool_name:'get_harness_status',arguments:{}});
+  socket.message({type:'invoke',request_id:'1',tool_name:'get_harness_status',catalog_version:socket.sent[0].catalog.version,arguments:{}});
   await new Promise(r=>setImmediate(r));
   assert.deepEqual(calls,[['get_harness_status',{}]]);
   assert.equal(socket.sent.at(-1).result.content[0].text,'ready');
   service.stop();
   assert.equal(service.status().enabled,false);
 });
+test('device publishes, refreshes and locally enforces its read-only tool catalog',async()=>{
+  const {service,calls,manager,definitions}=fixture();
+  Socket.instances.length=0;
+  service.start({enabled:true,url:'wss://router.example/agent',token:TOKEN});
+  const socket=Socket.instances.at(-1);socket.open();
+  const initial=socket.sent[0].catalog;
+  const names=initial.tools.map(tool=>tool.name);
+  assert.ok(names.includes('read_inventory'));
+  assert.ok(names.includes('get_harness_status'));
+  assert.equal(names.includes('write_file'),false);
+  socket.message({type:'registered',device_id:socket.sent[0].device_id,catalog_version:initial.version});
+  socket.message({type:'invoke',request_id:'read-1',tool_name:'read_inventory',
+    catalog_version:initial.version,arguments:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[['read_inventory',{}]]);
+  definitions.push(safeTool('read_inventory_extra'));
+  manager.emit('state');
+  const update=socket.sent.at(-1);
+  assert.equal(update.type,'catalog_update');
+  assert.notEqual(update.catalog.version,initial.version);
+  socket.message({type:'invoke',request_id:'stale-1',tool_name:'read_inventory',
+    catalog_version:initial.version,arguments:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(socket.sent.at(-1).error,'CATALOG_VERSION_STALE');
+  service.stop();
+});
 test('unified cloud routes saved-result pages and files through the live MCP gateway, not manager.call',async()=>{
   const {service,calls}=fixture(),seen=[];
   service.manager.broker={
-    results:{load:async()=>({source:{tool:'get_harness_status'}})},
+    results:{tools:()=>[safeTool('get_tool_result_page'),safeTool('get_tool_result_file')],load:async()=>({source:{tool:'get_harness_status'}})},
     toolCall:async(name,args)=>{
       seen.push([name,args]);
       return {structuredContent:{kind:name==='get_tool_result_page'?'harness_result_page':'harness_result_file'}};

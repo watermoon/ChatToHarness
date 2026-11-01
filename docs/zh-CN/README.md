@@ -51,6 +51,7 @@
 - [查看和筛选实时日志](live-logs.md)
 - [查找与理解执行记录](execution-records.md)
 - [开启详细诊断、复制和导出记录](diagnostics.md)
+- [只读检查 USB、PnP 和串口设备](hardware-inspection.md)
 
 ## 解决问题
 

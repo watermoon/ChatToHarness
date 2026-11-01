@@ -1,3 +1,16 @@
+## 2026-11-01 UnifyHarness 统一工具目录与 Windows 硬件枚举（Issue #5 / #6）
+
+- 当前分支：`feat/cloudflare-multi-device-router`；开发基线 HEAD：`7c74591c085165a278b4443fb1bb96c35333710c`。本轮工作区包含 Issue #5/#6 的实现与测试改动，尚未提交。
+- 采用 B 方案：本地 `McpManager.visibleTools()` 与结果分页工具共同生成设备目录；仅发布 `readOnlyHint=true`、`destructiveHint=false`、`openWorldHint=false` 且通过本地 denylist 的工具。Worker 按设备存储目录，`list_device_tools` 提供版本和分页，`call_device_tool` 要求明确 device_id、tool_name、catalog_version 和对象参数；Agent 再读取实时本地目录并通过 `manager.call` 走原有权限路径，不自动切换设备、不在断线后重放。
+- Worker 目录校验现会对规范化工具定义重新计算 SHA-256，拒绝版本与内容不匹配的注册/更新；保留精确旧版静态目录兼容。Wrangler 配置不再固定写死三项 `ALLOWED_TOOLS`；部署者仍可通过该环境变量进一步收窄全局范围。
+- Issue #5 的四项 Windows 只读工具已注册并进入动态安全目录：`list_usb_devices`、`list_pnp_devices`、`list_serial_ports`、`get_pnp_device_details`。使用固定 PowerShell/CIM 查询、参数和输出上限，不请求管理员提升、不打开/读写 COM 端口、不改变驱动或设备状态。
+- 帮助中心补齐英文、简体中文、日文硬件检查文章、导航和搜索别名；帮助站点文章计数测试同步更新。
+- 验证：`node --test tests/cloud-router-catalog.test.cjs tests/windows-hardware-inspection.test.cjs tests/cloud-router-service.test.cjs`：19/19 通过；`node --test --test-reporter=tap tests/*.test.cjs`：724 项，705 PASS、19 SKIP、0 FAIL；`Set-Location cloud-router; npm run check`：Cloud Router Worker 与 OAuth Worker dry-run 均通过。
+- Windows 构建：默认 `dist/win-unpacked` 被当前运行实例占用，未关闭用户进程；改用 `$env:CTH_DIST_SUBDIR='rocket-unifyharness-catalog-20261101'; npm run build` 成功，输出 `dist/rocket-unifyharness-catalog-20261101/win-unpacked`。
+- rocket 实际本地链路：`McpManager` 可见 19 项，动态安全目录 15 项，四项硬件工具全部存在；实际调用 `list_usb_devices` 返回 11 项、`list_pnp_devices` 返回 18 项、`list_serial_ports` 返回 0 项。当前未识别到目标 SF32 板，Issue #5 的 VID/PID、PnP 实例和 COM 映射验收仍阻塞，不能标记通过。
+- 生产 Cloudflare Worker 未部署，OAuth、配对凭据和旧 Tunnel 均未更改。当前运行中的 ChatToHarness 实例仍报告构建标识 `769ec712`、49 项工具；本轮新版为隔离目录构建，尚未替换/重启运行实例。
+- 下一步：复核 Git 差异及分支基线，提交并推送 Issue #5/#6 相关改动，按仓库上游流程建立 PR/跑 CI；远程真实调用需在不触碰生产的测试环境验证。连接 SF32 到 rocket 后重跑硬件枚举完成 Issue #5 实机验收。
+
 ## 2026-10-30 恢复 Cloudflare 部署清理按钮
 
 - 源码 `app/index.html` 的“高级管理 → 彻底重置云端”被硬编码 `hidden`，`renderer.js` 只设置 `disabled` 从不取消隐藏，因此即使本地有 Owner Key 也看不到入口；并非删除功能移除。

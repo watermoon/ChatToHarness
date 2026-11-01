@@ -5,11 +5,14 @@ const ID='cu-00000000-0000-4000-8000-000000000001',RESULT='result_'+'a'.repeat(3
 test('cloud agent routes only authorized status result pages without leaking other cached local results',async()=>{
  const calls=[];
  let sourceTool='get_harness_status';
+ const safeTool=name=>({name,description:name,inputSchema:{type:'object',properties:{}},
+  annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}});
  const manager={
   call:async()=>{throw Error('Must use scoped gateway');},
+  visibleTools:()=>[safeTool('get_harness_status')],
   broker:{
    toolCall:async(name,args)=>{calls.push([name,args]);return {content:[{type:'text',text:'safe'}]};},
-   results:{load:async()=>({source:{tool:sourceTool}})}
+   results:{tools:()=>[safeTool('get_tool_result_page'),safeTool('get_tool_result_file')],load:async()=>({source:{tool:sourceTool}})}
   }
  };
  const service=new CloudRouterService({manager,identity:{id:ID,name:'Mac',platform:'darwin'}});
@@ -51,7 +54,7 @@ test('authenticated Worker publishes two device-scoped paging tools and preserve
  assert.deepEqual(sent.map(x=>x.tool_name),['get_tool_result_page','get_tool_result_file']);
  assert.deepEqual(sent[0].arguments,{result_id:RESULT,offset:64,length:512});
  assert.deepEqual(sent[1].arguments,{result_id:RESULT,file_index:0});
- const forbidden=await rpc('tools/call',{name:'call_device_tool',arguments:{device_id:ID,tool_name:'start_process',arguments:{}}});
+ const forbidden=await rpc('tools/call',{name:'call_device_tool',arguments:{device_id:ID,tool_name:'start_process',catalog_version:'0'.repeat(64),arguments:{}}});
  assert.match(JSON.stringify(forbidden),/TOOL_DENIED/);
  assert.equal(sent.length,2);
 });
