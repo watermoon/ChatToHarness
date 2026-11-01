@@ -1,3 +1,14 @@
+## 2026-11-01 云端 Worker 动态目录上线与 rocket 实机同步复验（Issue #6）
+
+- 用户已运行新版 rocket 客户端；通过 `get_harness_status` 实际核对运行构建 `7c74591c085165a278b4443fb1bb96c35333710c`、dirty=true、构建于 2026-11-01 14:30:25Z；本地 MCP 网关共 53 个可用工具（含四项只读硬件检测）。此处的 53 是运行中的 Gateway 工具数，不能与先前在隔离测试进程中得到的 McpManager=19 混为一谈。
+- Cloudflare Wrangler 已登录既有账号；`wrangler deployments list --name chattoharness-cloud-router` 确认旧生产 Worker 最近部署于 2026-10-30 10:23:15Z，早于 11 月 1 日的动态目录实现。ChatGPT 旧工具快照仍只有 5 项，缺少 `list_device_tools`。
+- 部署前验证：`node --test tests/cloud-router.test.cjs tests/cloud-router-agent.test.cjs tests/cloud-router-service.test.cjs tests/cloud-router-catalog.test.cjs tests/cloud-router-live-integration.test.cjs`，34 PASS、0 FAIL；`cd cloud-router && npm run check` 两个 Worker dry-run 均成功。
+- 按用户本轮“检查并修复”要求，**仅部署 cloud-router Router Worker**：`cd cloud-router && wrangler deploy`，退出码 0，Cloudflare 当前版本 ID `ec287ab9-eb7f-40c7-a526-0955b20ffb2e`。未部署/改动 OAuth Worker，未重建配对，未删除 Durable Object、KV 或凭据，旧 Tunnel 配置未修改。回滚参考：旧 Worker 版本 `abd... `（完整 `abdadeb4-e84e-482c-89c7-d616f8903093`）。
+- 部署后调用当前 ChatGPT UnifyHarness `list_devices`，rocket 在线但 `catalog_version` 为空、`catalog_count=0`：确认已有旧 WebSocket 会话未自动重新发布目录；通过 rocket 的 ChatToHarness 连接配置 GUI 明确执行一次“断开 → 连接”，没有重置配对。GUI 操作已结束并关闭 Computer Use session。
+- 重新调用 UnifyHarness `list_devices`：rocket 在线，目录版本 `a422037999634ded4b6f972f0bfecd02e9a29e4a0c2cabc087c11ff29c17ccdc`，`catalog_count=28`。这是当前运行客户端实际发布、符合远程只读/封闭世界策略的工具集；不是本地 53 项全量授权。
+- 当前 ChatGPT 已缓存的 UnifyHarness 连接**仍只声明 5 个 MCP 工具**（`list_devices`、`inspect_client_context`、`get_tool_result_page`、`get_tool_result_file`、旧 schema `call_device_tool`）；工具元数据缓存由 ChatGPT 平台管理，需在 ChatGPT 插件连接中刷新工具定义，并在新会话核实 `list_device_tools` 与新版 `call_device_tool.catalog_version`。本轮没有证据可宣称 ChatGPT 端已刷新或真实 `list_device_tools` RPC 已通过。
+- 后续：在新会话刷新插件元数据后读取 rocket 28 项远程安全目录、按 catalog_version 执行实际只读工具；评估 Worker 升级后现存 WebSocket 自动请求 catalog 重发机制，避免下一次必须手动重连。对高风险/写入工具仍保持禁用，另立安全授权设计，不能凭动态目录直接放开。
+
 ## 2026-11-01 UnifyHarness 统一工具目录与 Windows 硬件枚举（Issue #5 / #6）
 
 - 当前分支：`feat/cloudflare-multi-device-router`；CI 修复提交 `90e85ccdd3873ca8d1b764934cc913f7e3a7b942` 已推送。PR #7 已建立并 ready for review，base=`main`、mergeable=true、未合并；Application checks 在 Windows 2025 与 macOS 15 全部通过，Website build 通过（PR 场景 deploy skipped）。
