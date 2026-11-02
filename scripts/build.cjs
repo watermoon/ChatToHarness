@@ -92,7 +92,7 @@ function main() {
   const installer = process.argv.includes('--dist');
   const args = ['--config', 'electron-builder.config.cjs', process.platform === 'darwin' ? '--mac' : '--win', process.platform === 'darwin' ? '--arm64' : '--x64',
     ...(installer ? [] : ['--dir']), '--publish', 'never', ...config.overrides,
-    ...(process.env.CTH_DIST_SUBDIR ? [`-c.directories.output=${path.relative(root,outputRoot)}`] : []),
+    `-c.directories.output=${path.relative(root,outputRoot)}`,
     ...(process.env.CTH_ELECTRON_DIST ? [`-c.electronDist=${process.env.CTH_ELECTRON_DIST}`] : [])];
   console.log(`正在生成 ChatToHarness ${installer ? '安装包' : '应用'}…`);
   run(path.join(root, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js'), args, config.env);

@@ -68,6 +68,26 @@ test('agent publishes catalog, syncs changes and rejects stale catalog versions'
     catalog_version:oldVersion,arguments:{}});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(ws.sent.at(-1).error,'CATALOG_VERSION_STALE');
+  assert.equal(ws.sent.at(-1).request_catalog_version,oldVersion);
+  assert.equal(ws.sent.at(-1).device_catalog_version,catalog.version);
+  assert.equal(ws.sent.at(-2).type,'catalog_update');
+  assert.equal(ws.sent.at(-2).catalog.version,catalog.version);
+  assert.equal(observed.length,1,'stale request must not run a tool');
+  agent.close();
+});
+test('missing live catalog reports unavailable without executing legacy-allowlisted tools',async()=>{
+  FakeWS.instances.length=0;
+  let calls=0;
+  const agent=connectAgent(options({catalogProvider:()=>null,
+    execute:async()=>{calls++;return {ok:true};}}));
+  const ws=FakeWS.instances.at(-1);
+  ws.opened();
+  ws.message({type:'registered',device_id:'moon'});
+  ws.message({type:'invoke',request_id:'catalog-missing',tool_name:'get_harness_status',
+    catalog_version:'a'.repeat(64),arguments:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ws.sent.at(-1).error,'DEVICE_CATALOG_UNAVAILABLE');
+  assert.equal(calls,0);
   agent.close();
 });
 test('only registered, live socket accepts work and closed agent never reconnects', async () => {

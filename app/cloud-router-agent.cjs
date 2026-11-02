@@ -6,7 +6,8 @@ const VALID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 function connectAgent({
   url, deviceId, name, platform, harnessVersion, osVersion, token, execute,
   catalogProvider, allowedTools, WebSocketImpl = globalThis.WebSocket,
-  socketFactory, reconnectMs = 2000, onStatusChange = () => {}
+  socketFactory, reconnectMs = 2000, onStatusChange = () => {},
+  onCatalogMismatch = () => {}, onCatalogError = () => {}
 }) {
   if (!/^wss:\/\//.test(url) || !VALID.test(deviceId || '') || typeof token !== 'string' ||
       token.length < 24 || typeof execute !== 'function' || typeof WebSocketImpl !== 'function')
@@ -14,17 +15,30 @@ function connectAgent({
 
   const legacyAllow = new Set(allowedTools || []);
   let ws, timer, closed = false, authenticated = false, attempt = 0, generation = 0;
-  let lastSentCatalogVersion = '';
-
+  let lastSentCatalogVersion = '', lastCatalogError = '';
+  function catalogFailure(code) {
+    if (lastCatalogError === code) return;
+    lastCatalogError = code;
+    onCatalogError(code);
+  }
   function currentCatalog() {
     if (typeof catalogProvider !== 'function') return null;
     try {
       const catalog = catalogProvider();
       if (!catalog || catalog.schema_version !== 1 ||
           typeof catalog.version !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.version) ||
-          !Array.isArray(catalog.tools)) return null;
+          !Array.isArray(catalog.tools)) {
+        catalogFailure('DEVICE_CATALOG_INVALID');
+        return null;
+      }
+      lastCatalogError = '';
       return catalog;
-    } catch { return null; }
+    } catch (err) {
+      const reason = String(err?.message || '');
+      catalogFailure(/^[A-Z][A-Z0-9_]{2,79}$/.test(reason)
+        ? reason : 'DEVICE_CATALOG_PROVIDER_FAILED');
+      return null;
+    }
   }
 
   function catalogPayload() {
@@ -102,12 +116,27 @@ function connectAgent({
       let reply;
       try {
         const catalog = currentCatalog();
-        if (message.catalog_version && catalog?.version !== message.catalog_version)
-          throw new Error('CATALOG_VERSION_STALE');
-        if (!allowedTool(toolName, catalog)) throw new Error('LOCAL_TOOL_DENIED');
-        if (!args || typeof args !== 'object' || Array.isArray(args))
-          throw new Error('INVALID_ARGUMENTS');
-        reply = {type: 'result', request_id: message.request_id, result: await execute(toolName, args, {expiresAt:message.expires_at})};
+        if (!catalog && typeof catalogProvider === 'function') {
+          reply = {type:'result',request_id:message.request_id,
+            error:'DEVICE_CATALOG_UNAVAILABLE',request_catalog_version:message.catalog_version||''};
+        } else if (message.catalog_version && catalog?.version !== message.catalog_version) {
+          // A directory returned by the Worker can lag behind the live device.
+          // Always republish when a request proves divergence, even if the last
+          // update was already sent but lost or not acknowledged.
+          lastSentCatalogVersion = '';
+          sendCatalog(socket);
+          const versions = {request_catalog_version: message.catalog_version,
+            device_catalog_version: catalog?.version || ''};
+          onCatalogMismatch(versions);
+          reply = {type: 'result', request_id: message.request_id,
+            error: 'CATALOG_VERSION_STALE', ...versions};
+        } else {
+          if (!allowedTool(toolName, catalog)) throw new Error('LOCAL_TOOL_DENIED');
+          if (!args || typeof args !== 'object' || Array.isArray(args))
+            throw new Error('INVALID_ARGUMENTS');
+          reply = {type: 'result', request_id: message.request_id,
+            result: await execute(toolName, args, {expiresAt:message.expires_at})};
+        }
       } catch (err) {
         reply = {type: 'result', request_id: message.request_id,
           error: String(err?.code || err?.message || 'LOCAL_TOOL_FAILED')};

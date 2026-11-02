@@ -544,6 +544,15 @@
   const toolAccessList=byId('cloud-tool-access-list');
   const toolAccessStatus=byId('cloud-tool-access-status');
   const scopeOptions=[['once','一次性'],['session','当前连接会话'],['permanent','永久授权']];
+  const translateBulkScope=()=>{
+    const select=byId('cloud-tool-bulk-scope');
+    if(!select)return;
+    for(const [value,label] of scopeOptions){
+      const option=Array.from(select.options).find(item=>item.value===value);
+      if(option)option.textContent=t(label);
+    }
+  };
+  translateBulkScope();
   const toolGroups={
     project:'项目与 Git',files:'文件操作',search:'文件搜索',tasks:'任务管理',
     process:'进程与终端',desktop:'桌面控制',hardware:'硬件设备',
@@ -877,6 +886,7 @@
     if (state.system?.locale && state.system.locale !== locale) {
       locale = i18n.normalize(state.system.locale);
       translateDocument(locale);
+      translateBulkScope();
       showTab(activeTab);
       renderDirectories();
       // Rebuild dynamic tool rows in the new locale (they are not in static HTML).

@@ -50,7 +50,11 @@ class CloudRouterService {
         platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
         catalogProvider: () => this.catalog(),
         execute: (name, args, context) => this.execute(name, args, context),
-        onStatusChange: status => {if(status==='reconnecting')this.remoteAccess?.clearSessions();this.onChange(this.status());}
+        onStatusChange: status => {if(status==='reconnecting')this.remoteAccess?.clearSessions();this.onChange(this.status());},
+        onCatalogMismatch: versions => this.log('cloud-router-catalog-version-mismatch',
+          {device_id:this.identity.id,...versions}),
+        onCatalogError: code => this.log('cloud-router-catalog-provider-failed',
+          {device_id:this.identity.id,code})
       });
       return this.status();
     } catch (error) {

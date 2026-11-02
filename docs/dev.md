@@ -1,3 +1,12 @@
+## 2026-11-02 UnifyHarness 设备目录失效修复（rocket）
+
+- 统一 UnifyHarness 线上复现：rocket 在线，Worker 列出的 28 个工具目录版本为 `a422037999634ded4b6f972f0bfecd02e9a29e4a0c2cabc087c11ff29c17ccdc`；`get_harness_status`、`list_usb_devices`、`list_serial_ports` 在设备端校验前置步骤返回 `DEVICE_TOOL_ERROR: CATALOG_VERSION_STALE`。
+- Worker 第一次部署后已将版本错误单独归类，实际线上错误的 `device_catalog_version` 为空；说明旧客户端在 invoke 时拿不到有效目录，不能仅按目录 hash 更新解释。新增新版 Agent 的 `DEVICE_CATALOG_UNAVAILABLE` 单独错误、有限且去重的目录提供器错误码日志，不暴露参数或密钥。
+- 新版 Agent 在目录版本不同的请求到达时，强制重新发送 catalog_update；Worker 记录请求/存储/设备版本，只对设备明确未执行且目标工具仍为相同定义的只读、非破坏、closed-world 调用自动重试一次。目录不可用、已变更工具定义、危险工具、超时和连接结果不明均不自动重放。
+- 回归测试：`tests/cloud-router-agent.test.cjs` 包含实时目录缺失场景；`tests/cloud-router-live-integration.test.cjs` 覆盖旧目录下工具不变自动恢复、工具定义改变拒绝重试；全量测试及 Worker dry-run 已执行成功，构建固定目录 `dist/win-unpacked`。这不代表线上 rocket 设备端已升级。
+- 线上 Cloudflare Router Worker 版本 `122903b0-e31a-49c4-b232-c23c4cb67616`（第二次部署）；旧客户端仍在使用早期构建，现场独立验收必须切换到 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked\\ChatToHarness.exe` 并以统一插件直接验收三项工具，检查目录更新后调用。历史请求精确秒级日志未取得，不能推测。
+- 同设备构建路径固定；禁止按 feature 分配新的 `dist` 子目录，保留用户此前三项未提交的固定路径修改。
+
 ## 2026-11-02 UnifyHarness 权限批量/分组及授权有效期（Issue #12）
 
 - 基于 PR #7 的设备端逐项授权实现：客户端新增全选授权、全部取消，按项目/Git、文件、搜索、任务、终端进程、Computer Use、硬件、MCP、设置和其他分组，每组可选择授权有效期并整组授权/取消；每个工具也有单独的授权有效期下拉框。

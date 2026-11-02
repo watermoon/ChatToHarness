@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
+const {createHash} = require('node:crypto');
 const {HarnessServices} = require('../app/harness-services.cjs');
 const {McpManager} = require('../app/mcp-manager.cjs');
 const {createDeviceCatalog} = require('../app/cloud-router-catalog.cjs');
@@ -84,7 +85,8 @@ test('local Worker -> device Agent -> MCP manager invokes a catalogued hardware 
   const services = new HarnessServices({home, hardwareInspector});
   const manager = new McpManager({services});
   manager.running = true;
-  const localCatalog = () => createDeviceCatalog(manager);
+  let catalogOverride = null;
+  const localCatalog = () => catalogOverride || createDeviceCatalog(manager);
   const socketErrors = [];
 
   class LoopbackWebSocket {
@@ -180,5 +182,33 @@ test('local Worker -> device Agent -> MCP manager invokes a catalogued hardware 
   });
   assert.equal(JSON.parse(stale.body.result.content[0].text).code, 'CATALOG_VERSION_STALE');
   assert.equal(calls.length, 1);
+  // Change an unrelated tool while the Worker still advertises the old version.
+  const mockTool = catalog.tools.find(x => x.name === 'list_usb_devices');
+  assert.ok(mockTool);
+  const newerTools = [...catalog.tools, {...mockTool,name:'zz_safe_mock'}].sort((a,b)=>a.name.localeCompare(b.name));
+  catalogOverride = {schema_version:1,tools:newerTools,
+    version:createHash('sha256').update(JSON.stringify({schema_version:1,tools:newerTools})).digest('hex')};
+  const recovered=await callRouterTool('call_device_tool',{
+    device_id:DEVICE_ID,tool_name:'list_usb_devices',catalog_version:catalog.version,arguments:{limit:1}
+  });
+  assert.equal(recovered.status,200);
+  const recoveryEnvelope=recovered.body.result.structuredContent||JSON.parse(recovered.body.result.content[0].text);
+  assert.equal((recoveryEnvelope.result||recoveryEnvelope).structuredContent?.count,1);
+  assert.equal(calls.length,2);
+  const refreshed=await callRouterTool('list_device_tools',{device_id:DEVICE_ID,limit:50});
+  assert.equal(refreshed.body.result.structuredContent.catalog_version,catalogOverride.version);
+  // A changed tool definition is not eligible for automatic retry.
+  const beforeChange=catalogOverride.version;
+  const changedTools=catalogOverride.tools.map(x=>x.name==='list_usb_devices'
+    ? {...x,description:'Changed USB inventory contract'} : x);
+  catalogOverride={schema_version:1,tools:changedTools,
+    version:createHash('sha256').update(JSON.stringify({schema_version:1,tools:changedTools})).digest('hex')};
+  const refused=await callRouterTool('call_device_tool',{
+    device_id:DEVICE_ID,tool_name:'list_usb_devices',catalog_version:beforeChange,arguments:{limit:1}
+  });
+  assert.equal(JSON.parse(refused.body.result.content[0].text).code,'CATALOG_VERSION_STALE');
+  assert.equal(calls.length,2,'changed tool definition was not retried');
+  const latest=await callRouterTool('list_device_tools',{device_id:DEVICE_ID,limit:50});
+  assert.equal(latest.body.result.structuredContent.catalog_version,catalogOverride.version);
   assert.deepEqual(socketErrors, []);
 });

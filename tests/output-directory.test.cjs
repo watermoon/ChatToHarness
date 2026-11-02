@@ -4,15 +4,14 @@ const assert=require('node:assert/strict');
 const path=require('node:path');
 const {outputDirectory}=require('../scripts/output-directory.cjs');
 const root=path.resolve(__dirname,'..');
-test('default installer layout remains backward compatible',()=>{
+
+test('all builds use the canonical per-checkout dist directory',()=>{
   assert.equal(outputDirectory(root,{}),path.join(root,'dist'));
+  assert.equal(outputDirectory(root,{CTH_DIST_SUBDIR:''}),path.join(root,'dist'));
 });
-test('release build can use isolated output without mutating running dist/mac-arm64',()=>{
-  assert.equal(outputDirectory(root,{CTH_DIST_SUBDIR:'0.7.2'}),path.join(root,'dist','0.7.2'));
-});
-test('build output subdir never escapes dist',()=>{
-  for(const name of ['..','.', '../outside','nested/name','a\\b','','__']) {
-    if(!name)continue;
-    assert.throws(()=>outputDirectory(root,{CTH_DIST_SUBDIR:name}),/CTH_DIST_SUBDIR/);
+
+test('feature-specific output directories are rejected',()=>{
+  for(const name of ['new-feature','rocket-remote-permission-groups-20261102','0.7.2','..','.', '../outside','nested/name','a\\b','__']) {
+    assert.throws(()=>outputDirectory(root,{CTH_DIST_SUBDIR:name}),/CTH_DIST_SUBDIR.*fixed dist/);
   }
 });

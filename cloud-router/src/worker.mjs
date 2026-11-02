@@ -268,23 +268,48 @@ export class DeviceHub {
         return json(error('TOOL_DENIED','Tool is not permitted by the cloud policy'),403);
       const ws = currentSocket(this.ctx, input.device_id);
       if (!ws) return json(error('DEVICE_OFFLINE', 'Selected device is not connected'), 503);
-      const requestId = crypto.randomUUID();
       const grantedTool=catalog.tools.find(tool=>tool.name===input.tool_name);
       const needsLocalConfirmation=['session','per_call'].includes(grantedTool?.remoteGrant?.mode);
       const ms = Math.max(1000, Math.min(30000, Number(input.timeout_ms) || (needsLocalConfirmation?30000:15000)));
-      return new Promise(resolve => {
+      const invokeOnce = catalogVersion => new Promise(resolve => {
+        const requestId = crypto.randomUUID();
         const timeout = setTimeout(() => {
           this.pending.delete(requestId);
           resolve(json(error('EXECUTION_UNKNOWN', 'Device response timed out; do not automatically retry'), 504));
         }, ms);
-        this.pending.set(requestId, {ws, resolve, timeout});
+        this.pending.set(requestId, {ws, resolve, timeout, catalog_version:catalogVersion,
+          device_id:input.device_id,tool_name:input.tool_name});
         try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name,
-          catalog_version:catalog.version, arguments: input.arguments,expires_at:Date.now()+ms})); }
+          catalog_version:catalogVersion, arguments: input.arguments,expires_at:Date.now()+ms})); }
         catch {
           clearTimeout(timeout); this.pending.delete(requestId);
           resolve(json(error('EXECUTION_UNKNOWN', 'Transport failed; execution state unknown'), 502));
         }
       });
+      const first = await invokeOnce(catalog.version);
+      // Only a proven device pre-execution version rejection is retryable.
+      // Never replay mutations, approved actions, timeouts or uncertain results.
+      if(first.status!==409 || grantedTool.remoteGrant ||
+         grantedTool.annotations?.readOnlyHint!==true ||
+         grantedTool.annotations?.destructiveHint!==false ||
+         grantedTool.annotations?.openWorldHint!==false) return first;
+      const stale = await first.clone().json();
+      if(stale.code!=='CATALOG_VERSION_STALE')return first;
+      // The Agent publishes its latest catalog before reporting a mismatch.
+      // Wait briefly for storage to reflect that update. Retry once only if
+      // this tool's entire definition is unchanged in the validated catalog.
+      for(let attempt=0;attempt<10;attempt++){
+        if(attempt)await new Promise(resolve=>setTimeout(resolve,75));
+        if(currentSocket(this.ctx,input.device_id)!==ws)break;
+        const storedLatest=await this.ctx.storage.get('catalog:'+input.device_id);
+        const latest=storedLatest===undefined?LEGACY_CATALOG:await validateCatalog(storedLatest);
+        if(!latest||latest.version===catalog.version)continue;
+        if(stale.device_catalog_version && latest.version!==stale.device_catalog_version)break;
+        const currentTool=latest.tools.find(tool=>tool.name===input.tool_name);
+        if(JSON.stringify(currentTool)!==JSON.stringify(grantedTool))break;
+        return invokeOnce(latest.version);
+      }
+      return first;
     }
     return new Response('Not found', {status: 404});
   }
@@ -351,6 +376,25 @@ export class DeviceHub {
     if (!pending || pending.ws !== ws) return;
     this.pending.delete(item.request_id);
     clearTimeout(pending.timeout);
+    if (item.error === 'DEVICE_CATALOG_UNAVAILABLE') {
+      console.warn('cloud-router-device-catalog-unavailable', JSON.stringify({
+        device_id:pending.device_id,tool_name:pending.tool_name,
+        request_catalog_version:pending.catalog_version}));
+      pending.resolve(json({...error('DEVICE_CATALOG_UNAVAILABLE',
+        'The device cannot obtain a valid local tool catalog'),
+        worker_catalog_version:pending.catalog_version},503));
+      return;
+    }
+    if (item.error === 'CATALOG_VERSION_STALE') {
+      const versions = {request_catalog_version: item.request_catalog_version || pending.catalog_version || '',
+        worker_catalog_version: pending.catalog_version || '',
+        device_catalog_version: item.device_catalog_version || ''};
+      console.warn('cloud-router-catalog-mismatch', JSON.stringify({
+        device_id: pending.device_id, tool_name: pending.tool_name, ...versions}));
+      pending.resolve(json({...error('CATALOG_VERSION_STALE', 'Device catalog changed before execution'),
+        ...versions}, 409));
+      return;
+    }
     pending.resolve(json(item.error ? error('DEVICE_TOOL_ERROR', String(item.error).slice(0,1000))
       : {ok: true, result: item.result}));
   }
