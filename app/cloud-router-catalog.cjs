@@ -11,8 +11,8 @@ const SAFE_ANNOTATIONS = Object.freeze({
   openWorldHint: false
 });
 
-// Read-only does not mean harmless. Keep sensitive diagnostics and all mutation/
-// execution entry points out of the remote surface even if a provider mislabels them.
+// Risk classification is metadata only; actual tool authorization happens in
+// the desktop's local tool list, not in the Cloudflare catalog.
 const DENIED_TOOL_NAMES = new Set([
   'computer_use',
   'start_process',
@@ -53,9 +53,9 @@ function isRemoteEligible(tool) {
 
 function copyDefinition(tool, access) {
   const safe = isRemoteEligible(tool);
-  if (access && !access.enabled(tool)) return null;
-  const granted = !safe && access?.enabled(tool) === true;
-  if (!safe && !granted) return null;
+  // Every locally registered tool is remotely discoverable. Authorization
+  // is checked only by the desktop's local tool list when executing a call.
+  const granted = !safe;
   if (!tool.inputSchema || typeof tool.inputSchema !== 'object' ||
       Array.isArray(tool.inputSchema) || tool.inputSchema.type !== 'object' ||
       !tool.inputSchema.properties || typeof tool.inputSchema.properties !== 'object' ||
@@ -71,7 +71,10 @@ function copyDefinition(tool, access) {
       idempotentHint: tool.annotations?.idempotentHint === true,
       openWorldHint: granted ? tool.annotations?.openWorldHint === true : SAFE_ANNOTATIONS.openWorldHint
     },
-    ...(granted ? {remoteGrant:{mode:access.mode(tool.name)}} : {})
+    ...(granted ? {remoteGrant:{mode:access?.mode?.(tool.name) ||
+      (bareName(tool.name)==='computer_use'?'session':
+        ['kill_process','force_terminate','move_file','undo_project_edit'].includes(bareName(tool.name))?'per_call':
+        ['start_process','start_task','interact_with_process','set_config_value'].includes(bareName(tool.name))?'scoped':'persistent')}} : {})
   };
   if (Buffer.byteLength(JSON.stringify(definition), 'utf8') > MAX_TOOL_BYTES) return null;
   return definition;

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('localHarness',Object.freeze({
   cloudRouterListDevices:()=>call('cloud-router-list-devices'),
   cloudRouterToolPermissions:()=>call('cloud-router-tool-permissions'),
   cloudRouterToolGrant:input=>call('cloud-router-tool-grant',input),
+  cloudRouterAutoAllow:input=>call('cloud-router-auto-allow',input),
   cloudRouterDisconnect:()=>call('cloud-router-disconnect'),
   cloudRouterReconnect:()=>call('cloud-router-reconnect'),
   cloudBootstrapDiscover:input=>call('cloud-bootstrap-discover',input),

@@ -42,6 +42,21 @@ test('only fully specified wss /agent URL and high-entropy token accepted',()=>{
   assert.equal(service.start({enabled:true,url:'wss://router.example/agent?key=x',token:TOKEN}).phase,'failed');
   assert.equal(service.start({enabled:true,url:'wss://router.example/agent',token:'weak'}).phase,'failed');
 });
+test('CloudRouterService propagates test mode and reports it explicitly',()=>{
+ const {manager}=fixture();
+ Socket.instances.length=0;
+ const service=new CloudRouterService({manager,testMode:true,
+   identity:{id:'moon',name:'MOON',platform:'win32'},WebSocketImpl:Socket});
+ assert.equal(service.status().test_mode,true);
+ service.start({enabled:true,url:'wss://router.example/agent',token:TOKEN});
+ const socket=Socket.instances.at(-1);
+ socket.open();
+ assert.equal(socket.sent[0].test_mode,true);
+ socket.message({type:'registered',device_id:'moon',test_mode:true,
+   catalog_version:socket.sent[0].catalog.version});
+ assert.equal(service.status().connected,true);
+ service.stop();
+});
 test('the device registers its stable local identity and calls existing manager for read-only status',async()=>{
   const {service,calls}=fixture();
   Socket.instances.length=0;
@@ -70,7 +85,7 @@ test('device publishes, refreshes and locally enforces its read-only tool catalo
   const names=initial.tools.map(tool=>tool.name);
   assert.ok(names.includes('read_inventory'));
   assert.ok(names.includes('get_harness_status'));
-  assert.equal(names.includes('write_file'),false);
+  assert.equal(names.includes('write_file'),true,'mutating tools must also be discoverable');
   socket.message({type:'registered',device_id:socket.sent[0].device_id,catalog_version:initial.version});
   socket.message({type:'invoke',request_id:'read-1',tool_name:'read_inventory',
     catalog_version:initial.version,arguments:{}});
@@ -86,6 +101,18 @@ test('device publishes, refreshes and locally enforces its read-only tool catalo
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(socket.sent.at(-1).error,'CATALOG_VERSION_STALE');
   service.stop();
+});
+test('remote status forwards declared pagination arguments and rejects unsupported fields',async()=>{
+ const {service,calls}=fixture(),seen=[];
+ service.manager.broker={results:{tools:()=>[]},toolCall:async(name,args)=>{
+   seen.push([name,args]);return {structuredContent:{ok:true}};
+ }};
+ assert.deepEqual((await service.execute('get_harness_status',{limit:5})).structuredContent,{ok:true});
+ assert.deepEqual((await service.execute('get_harness_status',{cursor:'abc',limit:2})).structuredContent,{ok:true});
+ assert.deepEqual(seen,[['get_harness_status',{limit:5}],['get_harness_status',{cursor:'abc',limit:2}]]);
+ assert.deepEqual(calls,[]);
+ for(const args of [{limit:0},{limit:201},{limit:1.2},{cursor:123},{project_path:'C:\\secret'}])
+   await assert.rejects(()=>service.execute('get_harness_status',args),/CLOUD_ROUTER_INVALID_ARGUMENTS/);
 });
 test('unified cloud routes saved-result pages and files through the live MCP gateway, not manager.call',async()=>{
   const {service,calls}=fixture(),seen=[];
@@ -109,13 +136,14 @@ test('unified cloud routes saved-result pages and files through the live MCP gat
   await assert.rejects(()=>service.execute('get_tool_result_page',{result_id}),/CLOUD_ROUTER_TOOL_UNAVAILABLE/);
 });
 
-test('terminal, filesystem and Computer Use are always denied before existing manager',async()=>{
+test('only registered tools route to the local manager; local grant controls execution',async()=>{
   const {service,calls}=fixture();
-  for(const name of ['start_process','computer_use','write_file','git_status','get_harness_status__anything']){
+  for(const name of ['start_process','computer_use','git_status','get_harness_status__anything']){
     await assert.rejects(()=>service.execute(name,{}),/CLOUD_ROUTER_TOOL_DENIED/);
   }
+  await service.execute('write_file',{});
+  assert.deepEqual(calls,[['write_file',{}]]);
   await assert.rejects(()=>service.execute('get_harness_status',{project_path:'/private'}),/CLOUD_ROUTER_INVALID_ARGUMENTS/);
-  assert.equal(calls.length,0);
 });
 
 

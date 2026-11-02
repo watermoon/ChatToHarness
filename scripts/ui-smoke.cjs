@@ -122,6 +122,7 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   let page = await launch();
   const initial = await getState();
   await tab(page,'connection');
+  await page.locator('#channel-cloud-tab').click();
   // Account-based Cloudflare onboarding intentionally hides the legacy Owner Key.
   await page.locator('#cloud-setup-start').waitFor({state:'visible'});
   assert.equal(await page.locator('#cloud-setup-copy-key').count(),1);
@@ -295,6 +296,7 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   // The dialog only appears for unpaired devices. Invalid inputs never reach
   // the network, and closing the dialog clears any sensitive code.
   await tab(page,'connection');
+  await page.locator('#channel-cloud-tab').click();
   const pairInput=page.locator('#cloud-mcp-url');
   const pairCode=page.locator('#cloud-pair-code');
   const pairButton=page.locator('#cloud-pair-submit');
@@ -530,12 +532,21 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
     await page.waitForFunction(lang => document.documentElement.lang === lang, locale);
     assert.equal((await getState()).system.locale, locale);
     assert.equal((await getState()).runtime.state, 'ready');
-    const expected = {en:'Connection settings',ja:'接続設定','zh-CN':'连接配置'}[locale];
+    const expected = {en:'Secure tunnel settings',ja:'安全なトンネルの設定','zh-CN':'安全通道配置'}[locale];
     assert.equal(await page.locator('#nav-connection').textContent(), expected);
     const menu = await instance.evaluate(({Menu}) => Menu.getApplicationMenu().items.flatMap(item => item.submenu?.items.map(child => child.label) || []));
     assert.ok(menu.includes({en:'Open window',ja:'ウィンドウを開く','zh-CN':'打开窗口'}[locale]));
-    for (const name of ['overview', 'connection', 'directories', 'mcp', 'help']) {
+    for (const name of ['overview', 'connection', 'tool-access', 'directories', 'mcp', 'help']) {
       await tab(page, name);
+      if (name === 'connection') {
+        await page.locator('#channel-cloud-tab').click();
+        assert.equal(await page.locator('#panel-cloud').isVisible(),true);
+        assert.equal(await page.locator('#channel-tunnel').isVisible(),false);
+        await page.screenshot({path:path.join(output, `console-cloud-${locale}.png`),fullPage:true});
+        await page.locator('#channel-tunnel-tab').click();
+        assert.equal(await page.locator('#channel-tunnel').isVisible(),true);
+        assert.equal(await page.locator('#panel-cloud').isVisible(),false);
+      }
       await page.screenshot({path:path.join(output, `console-${name}-${locale}.png`),fullPage:true});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       if (locale === 'en') {
@@ -549,6 +560,26 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
     }
   }
   assert.equal(fs.readFileSync(path.join(stateHome, 'settings.json'), 'utf8'), configBeforeLanguages);
+  await tab(page,'tool-access');
+  const toolLayout=await page.evaluate(()=>{
+    const host=document.querySelector('#panel-tool-access').getBoundingClientRect();
+    const card=document.querySelector('#panel-tool-access .tool-access-page-card').getBoundingClientRect();
+    return {panelWidth:host.width,cardWidth:card.width};
+  });
+  assert.ok(toolLayout.panelWidth>0&&toolLayout.cardWidth>=toolLayout.panelWidth*.92,
+    'local tool list must use the complete right content area: '+JSON.stringify(toolLayout));
+  await page.waitForFunction(()=>document.querySelectorAll('.remote-tool-group-toggle').length>0);
+  const groups=page.locator('.remote-tool-group-toggle');
+  const groupCount=await groups.count();
+  await page.locator('#cloud-tool-expand-all').click();
+  assert.equal(await page.locator('.remote-tool-group-toggle[aria-expanded="true"]').count(),groupCount);
+  await page.locator('#cloud-tool-collapse-all').click();
+  assert.equal(await page.locator('.remote-tool-group-toggle[aria-expanded="false"]').count(),groupCount);
+  await groups.first().click();
+  assert.equal(await groups.first().getAttribute('aria-expanded'),'true');
+  await page.locator('#cloud-tool-access-refresh').click();
+  await page.waitForFunction(()=>document.querySelector('.remote-tool-group-toggle')?.getAttribute('aria-expanded')==='true');
+  assert.equal(await groups.first().getAttribute('aria-expanded'),'true','group folding survives tool refresh');
   assert.equal(fs.readFileSync(mcpSettingsFile, 'utf8'), mcpConfigBeforeLanguages, 'language switching preserves MCP configuration and permissions');
   assert.equal(fs.readFileSync(pidFile, 'utf8'), pidsBeforeLanguages, 'language switching must not restart managed processes');
   await tab(page, 'connection');

@@ -22,6 +22,23 @@ test('agent rejects untrusted and insecure connection configuration', () => {
   assert.throws(() => connectAgent(options({url: 'ws://localhost/agent'})), /INVALID_AGENT_CONFIGURATION/);
   assert.throws(() => connectAgent(options({token: '123'})), /INVALID_AGENT_CONFIGURATION/);
 });
+test('test client sends explicit flag and requires the server to echo test mode',async()=>{
+ FakeWS.instances.length=0;
+ const testAgent=connectAgent(options({testMode:true}));
+ const testSocket=FakeWS.instances.at(-1);
+ testSocket.opened();
+ assert.equal(testSocket.sent[0].test_mode,true);
+ testSocket.message({type:'registered',device_id:'moon',test_mode:true,connection_id:'test-conn'});
+ assert.equal(testAgent.connected,true);
+ testAgent.close();
+ const production=connectAgent(options());
+ const prodSocket=FakeWS.instances.at(-1);
+ prodSocket.opened();
+ assert.equal(Object.hasOwn(prodSocket.sent[0],'test_mode'),false);
+ prodSocket.message({type:'registered',device_id:'moon',test_mode:true});
+ assert.equal(production.connected,false,'test registration cannot be mistaken for production');
+ production.close();
+});
 test('agent registers device, executes allowed tool and denies non-allowlisted operations', async () => {
   FakeWS.instances.length = 0;
   const observed = [];

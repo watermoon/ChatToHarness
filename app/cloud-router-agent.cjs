@@ -1,13 +1,13 @@
 'use strict';
 // Device-side transport. The desktop app must supply an authorized local MCP executor.
-// A disconnected call is never replayed; the cloud reports the outcome as unknown.
+// Only strictly read-only, closed-world calls may be retried across same-device handover; mutations are never replayed.
 const VALID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 
 function connectAgent({
-  url, deviceId, name, platform, harnessVersion, osVersion, token, execute,
+  url, deviceId, name, platform, harnessVersion, osVersion, token, execute, testMode = false,
   catalogProvider, allowedTools, WebSocketImpl = globalThis.WebSocket,
   socketFactory, reconnectMs = 2000, onStatusChange = () => {},
-  onCatalogMismatch = () => {}, onCatalogError = () => {}
+  onCatalogMismatch = () => {}, onCatalogError = () => {}, onConnectionEvent = () => {}
 }) {
   if (!/^wss:\/\//.test(url) || !VALID.test(deviceId || '') || typeof token !== 'string' ||
       token.length < 24 || typeof execute !== 'function' || typeof WebSocketImpl !== 'function')
@@ -91,6 +91,7 @@ function connectAgent({
       socket.send(JSON.stringify({
         type: 'register', device_id: deviceId, name, platform,
         harness_version: harnessVersion, os_version: osVersion, token,
+        ...(testMode ? {test_mode: true} : {}),
         ...(catalog ? {catalog} : {})
       }));
       if (catalog) lastSentCatalogVersion = catalog.version;
@@ -100,6 +101,11 @@ function connectAgent({
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'registered' && message.device_id === deviceId) {
+        if (Boolean(message.test_mode) !== Boolean(testMode)) {
+          socket.close(1008, 'Agent registration mode mismatch');
+          return;
+        }
+        onConnectionEvent({event:'registered',test_mode:!!testMode,connection_id:message.connection_id||''});
         authenticated = true;
         attempt = 0;
         const catalog = currentCatalog();
@@ -151,8 +157,15 @@ function connectAgent({
       const delay = Math.min(30000, reconnectMs * (2 ** Math.min(4, attempt++)));
       timer = setTimeout(() => { timer = undefined; open(); }, delay);
     };
-    socket.addEventListener('close', schedule);
-    socket.addEventListener('error', schedule);
+    socket.addEventListener('close', event=>{
+      onConnectionEvent({event:'close',code:Number.isSafeInteger(event?.code)?event.code:0,
+        reason:String(event?.reason||'').slice(0,100)});
+      schedule();
+    });
+    socket.addEventListener('error', ()=>{
+      onConnectionEvent({event:'error'});
+      schedule();
+    });
   }
 
   open();

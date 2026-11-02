@@ -179,13 +179,34 @@ textarea,select{font:inherit}textarea:focus-visible,select:focus-visible,input[t
 }
 
 
+/* Channel types are sibling tabs inside Secure Tunnel, not sidebar entries. */
+.connection-channel-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 16px;padding:4px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--line)}
+.connection-channel-tab{padding:11px 8px;min-width:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);font-weight:600;text-align:center}
+.connection-channel-tab.selected{background:var(--paper);border-color:var(--line);color:var(--ink);box-shadow:0 1px 4px #192a3812}
+.connection-channel-tab:hover:not(.selected){background:var(--paper)}
+.connection-channel-tab:focus-visible{outline:3px solid #98b4fa;outline-offset:2px}
+#channel-tunnel,#panel-cloud,#panel-tool-access{width:100%;min-width:0}
+#panel-tool-access .tool-access-page-card{width:100%;max-width:none}
+#panel-tool-access .remote-tool-access-list{display:flex;flex-direction:column;gap:9px;width:100%}
+#panel-tool-access .remote-tool-group-body{width:100%}
 /* Remote permission controls are local-only. No access is implied by showing a row. */
 .remote-tool-bulk {display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
+.remote-tool-auto-policy{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);margin:8px 0}
+.remote-tool-auto-policy label{font-size:12px;color:var(--ink)}
+.remote-tool-auto-switch{display:flex;gap:8px;align-items:center;font-weight:600}
+.remote-tool-auto-switch input{width:17px;height:17px}
+.remote-tool-auto-policy select{min-height:32px;min-width:126px;padding:5px 7px;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:6px}
+.remote-tool-auto-hint{flex-basis:100%;font-size:11px;color:var(--muted)}
 .remote-tool-bulk label {font-size:12px;color:var(--muted)}
 .remote-tool-bulk select,.remote-tool-scope {min-width:105px;max-width:180px;min-height:32px;padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12px}
 .remote-tool-group {border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--paper)}
 .remote-tool-group-header {display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:6px 5px;border-bottom:1px solid var(--line)}
-.remote-tool-group-header strong {font-size:12px;flex:1;min-width:100px}
+.remote-tool-group-toggle {font:inherit;font-size:12px;font-weight:700;text-align:left;color:var(--ink);background:transparent;border:0;cursor:pointer;flex:1;min-width:110px;padding:7px 3px}
+.remote-tool-group-toggle::before {content:'▸';display:inline-block;margin-right:8px;transition:transform .12s ease}
+.remote-tool-group-toggle[aria-expanded="true"]::before {transform:rotate(90deg)}
+.remote-tool-group-toggle:focus-visible {outline:2px solid var(--accent,#1683d8);outline-offset:2px;border-radius:4px}
+.remote-tool-group-body[hidden] {display:none}
+.remote-tool-group-header:has(.remote-tool-group-toggle[aria-expanded="false"]) {border-bottom:0}
 .remote-tool-group-count {color:var(--muted);font-size:11px}
 .remote-tool-group-header .button {min-height:32px;padding:5px 9px}
 .remote-tool-access-row .remote-tool-scope {margin-left:auto}

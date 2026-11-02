@@ -24,7 +24,8 @@
             <button id="nav-history" class="nav-item" data-nav-level="child" type="button" role="tab" aria-selected="false" aria-controls="panel-history" tabindex="-1" data-tab="history"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="2.5" width="12" height="15" rx="2"/><path d="M7 6.5h6M7 9.5h6M7 12.5h3m1.5 1.3 1.3 1.2 2-2.3"/></svg>执行记录</button>
           </div>
         </div>
-        <button id="nav-connection" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-connection" tabindex="-1" data-tab="connection"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 12-1.2 1.2a3.3 3.3 0 0 1-4.6-4.6L5 5a3.3 3.3 0 0 1 4.6 0M13 8l1.2-1.2a3.3 3.3 0 0 1 4.6 4.6L15 15a3.3 3.3 0 0 1-4.6 0M7 13l6-6" transform="translate(1 -0.5) scale(.9)"/></svg>连接配置</button>
+        <button id="nav-connection" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-connection" tabindex="-1" data-tab="connection"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 12-1.2 1.2a3.3 3.3 0 0 1-4.6-4.6L5 5a3.3 3.3 0 0 1 4.6 0M13 8l1.2-1.2a3.3 3.3 0 0 1 4.6 4.6L15 15a3.3 3.3 0 0 1-4.6 0M7 13l6-6" transform="translate(1 -0.5) scale(.9)"/></svg>安全通道配置</button>
+        <button id="nav-tool-access" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-tool-access" tabindex="-1" data-tab="tool-access"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="9" width="12" height="9" rx="2"/><path d="M7 9V6a3 3 0 0 1 6 0v3m-3 3v3"/></svg>本机工具授权</button>
         <button id="nav-directories" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-directories" tabindex="-1" data-tab="directories"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6V4.5h5L10 7h7v9H3V6Z"/><path d="M3 8h14"/></svg>工作目录<span id="directory-nav-count" class="nav-count">0</span></button>
         <button id="nav-mcp" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-mcp" tabindex="-1" data-tab="mcp"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3v5m6-5v5M5 7h10v3a5 5 0 0 1-10 0V7Zm5 8v3"/></svg>插件<span id="mcp-nav-count" class="nav-count">0</span></button>
         <button id="nav-help" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-help" tabindex="-1" data-tab="help"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5C8 3 5 3 3 4v12c2-1 5-1 7 1 2-2 5-2 7-1V4c-2-1-5-1-7 1Zm0 0v12"/></svg>接入与帮助</button>
@@ -42,7 +43,7 @@
       <div id="mcp-approvals-home"><section id="mcp-approvals" class="card mcp-approvals" aria-labelledby="mcp-approvals-title" hidden><h2 id="mcp-approvals-title">等待本机确认</h2><p class="mcp-caption">核对服务、工具和参数后再允许执行。关闭窗口不会自动允许。</p><div id="mcp-approval-list" aria-live="polite"></div></section></div>
       <form id="settings-form" novalidate>
         <section id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="nav-overview">
-          <div class="connection-hero card"><div class="hero-copy"><div class="hero-kicker"><span class="mini-dot"></span>安全通道</div><h2 id="overview-headline">准备连接你的工作空间</h2><p id="runtime-description">添加工作目录或 MCP 服务，保存连接配置，即可开始。</p><div class="hero-actions"><button id="reconnect" class="button primary" type="button"><span id="reconnect-label">连接通道</span><span aria-hidden="true">↗</span></button><button class="button secondary" type="button" data-navigate="connection">连接配置</button><button id="stop" class="text-button" type="button">停止连接</button></div></div><div class="route-visual" aria-label="客户端通过安全通道调用本机工具"><span class="route-node route-client"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/><path d="M9 9h6m-6 3h4"/></svg><span>客户端</span></span><span class="route-line"><span></span></span><span class="route-node route-host"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="12" rx="2"/><path d="M8 20h8m-4-4v4m-5-9 2 2 3-4"/></svg><span>本机工具</span></span></div></div>
+          <div class="connection-hero card"><div class="hero-copy"><div class="hero-kicker"><span class="mini-dot"></span>安全通道</div><h2 id="overview-headline">准备连接你的工作空间</h2><p id="runtime-description">添加工作目录或 MCP 服务，保存连接配置，即可开始。</p><div class="hero-actions"><button id="reconnect" class="button primary" type="button"><span id="reconnect-label">连接通道</span><span aria-hidden="true">↗</span></button><button class="button secondary" type="button" data-navigate="connection">安全通道配置</button><button id="stop" class="text-button" type="button">停止连接</button></div></div><div class="route-visual" aria-label="客户端通过安全通道调用本机工具"><span class="route-node route-client"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5Z"/><path d="M9 9h6m-6 3h4"/></svg><span>客户端</span></span><span class="route-line"><span></span></span><span class="route-node route-host"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="12" rx="2"/><path d="M8 20h8m-4-4v4m-5-9 2 2 3-4"/></svg><span>本机工具</span></span></div></div>
           <div class="summary-grid"><article class="summary-card"><span class="summary-label">本机工具</span><strong id="tools-summary">等待检查</strong><span class="summary-detail">文件 · 终端 · 开发工具</span></article><article class="summary-card"><span class="summary-label">工作目录</span><strong id="folders-summary">尚未选择</strong><button class="inline-link" type="button" data-navigate="directories">管理访问目录 <span aria-hidden="true">→</span></button></article><article class="summary-card"><span class="summary-label">工程规范</span><strong id="rules-summary">自动加载</strong><span id="rules-detail" class="summary-detail">AGENTS.md 与相关规则</span></article></div>
           <section class="card overview-log-link" aria-labelledby="overview-log-title">
             <div class="overview-log-copy"><span class="live-log-dot" aria-hidden="true"></span><div><h2 id="overview-log-title">实时日志</h2><p>直接查看本机工具、连接和异常，自动滚动更新。</p></div></div>
@@ -53,7 +54,15 @@
         </section>
 
         <section id="panel-connection" class="tab-panel" role="tabpanel" aria-labelledby="nav-connection" hidden>
+          <div class="connection-channel-tabs" role="tablist" aria-label="通道类型">
+            <button id="channel-tunnel-tab" class="connection-channel-tab selected" role="tab" type="button" aria-controls="channel-tunnel" aria-selected="true" tabindex="0">安全通道配置</button>
+            <button id="channel-cloud-tab" class="connection-channel-tab" role="tab" type="button" aria-controls="panel-cloud" aria-selected="false" tabindex="-1">Cloudflare MCP 通道配置</button>
+          </div>
+          <div id="channel-tunnel" role="tabpanel" aria-labelledby="channel-tunnel-tab">
           <section class="card connection-card" aria-labelledby="connection-title"><div class="card-header"><div><h2 id="connection-title">安全通道配置</h2><p>使用为这个工作空间创建的通道与运行密钥。</p></div><button class="text-button" type="button" data-external="platform">服务配置页面 <span aria-hidden="true">↗</span></button></div><div class="field-grid"><div class="field"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnelId" type="text" placeholder="tunnel_…" autocomplete="off" autocapitalize="off" spellcheck="false" required /><div class="field-hint">客户端接入时选择同一个 Tunnel。</div></div><div class="field"><div class="label-row"><label for="api-key">Runtime API Key</label><span id="key-status" class="key-status" hidden>已安全保存</span></div><div class="password-field"><input id="api-key" name="apiKey" type="password" placeholder="输入 Runtime API Key" autocomplete="off" autocapitalize="off" spellcheck="false" /><button id="toggle-key" class="password-toggle" type="button" aria-label="显示密钥" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z"/><circle cx="10" cy="10" r="2"/></svg></button></div><div class="field-hint">由系统加密保存，界面不会回显已保存的密钥。</div></div></div><div class="setting-row connection-options"><div><label class="checkbox-label" for="auto-connect"><input id="auto-connect" type="checkbox" checked /><span>打开应用时自动连接</span></label><p>关闭窗口后继续后台运行；不会随系统登录启动。</p></div><button id="open-proxy-settings" class="text-button proxy-settings-link" type="button" aria-controls="panel-proxy"><span>代理配置</span> <span aria-hidden="true">↗</span></button></div><div class="form-actions"><button id="save-connect" class="button primary" type="submit"><span id="save-connect-label">保存并连接</span><span aria-hidden="true">↗</span></button><span id="save-indicator" class="save-indicator">填写后保存</span></div></section>
+          <section class="card credentials-card"><div><h2>更换或清除凭据</h2><p>替换密钥时直接输入新值。清除后会停止连接，工作目录与规则设置仍然保留。</p></div><button id="clear-credentials" class="button subtle-danger" type="button">清除凭据</button></section><div class="quiet-note"><span aria-hidden="true">ⓘ</span><p>文件工具需要先选择工作目录；MCP 扩展可以单独使用。Runtime API Key 仅用于运行通道，不能代替客户端或 API 调用方的凭据。</p></div>
+          </div>
+          <section id="panel-cloud" class="connection-channel-panel" role="tabpanel" aria-labelledby="channel-cloud-tab" hidden>
           <section class="card connection-card" aria-labelledby="cloud-setup-heading">
             <div class="card-header"><div><div class="cloud-heading-line"><h2 id="cloud-setup-heading">云端服务</h2><details class="cloud-info"><summary aria-label="云端服务说明" title="云端服务说明">i</summary><div class="cloud-info-content">使用同一个 Cloudflare 账户自动发现服务并连接各台设备。</div></details></div></div><button class="text-button" type="button" data-navigate="help">使用说明 ↗</button></div>
             <p id="cloud-discovery-info" class="field-hint">正在自动检查云端服务…</p>
@@ -111,20 +120,33 @@
             </details>
             <p id="cloud-devices-status" class="field-hint" role="status" aria-live="polite">配对后可查看设备清单。</p>
           </section>
-          <section class="card connection-card" aria-labelledby="cloud-tool-access-title">
-            <div class="card-header"><div><h2 id="cloud-tool-access-title">远程工具权限 · 当前设备</h2><p>仅在本机勾选允许 UnifyHarness 远程使用的工具。默认只读；本机其他权限仍然生效。</p></div><button id="cloud-tool-access-refresh" class="button secondary" type="button">刷新工具</button></div>
+          </section>
+        </section>
+        <section id="panel-tool-access" class="tab-panel" role="tabpanel" aria-labelledby="nav-tool-access" hidden>
+          <section class="card connection-card tool-access-page-card" aria-labelledby="cloud-tool-access-title">
+            <div class="card-header"><div><h2 id="cloud-tool-access-title">本机工具授权 · 当前设备</h2><p>远端默认可发现并发起工具调用；本机列表是唯一的工具授权设置。默认允许，取消勾选即拒绝执行。不再弹出 UnifyHarness 二次授权窗口。</p></div><button id="cloud-tool-access-refresh" class="button secondary" type="button">刷新工具</button></div>
             <p id="cloud-tool-access-status" class="field-hint" role="status" aria-live="polite">正在读取本机工具权限…</p>
+            <div class="remote-tool-auto-policy">
+              <label class="remote-tool-auto-switch"><input id="cloud-tool-auto-allow" type="checkbox" checked />自动允许授权请求</label>
+              <label for="cloud-tool-auto-scope">默认允许模式</label>
+              <select id="cloud-tool-auto-scope">
+                <option value="session" selected>当前连接会话</option>
+                <option value="permanent">永久允许</option>
+              </select>
+              <small class="remote-tool-auto-hint">仅作用于未单独设置权限的工具；明确取消授权始终优先。更改自动允许策略需本机二次确认。</small>
+            </div>
             <div class="remote-tool-bulk">
               <label for="cloud-tool-bulk-scope">批量授权有效期</label>
               <select id="cloud-tool-bulk-scope"><option value="once">一次性</option><option value="session">当前连接会话</option><option value="permanent" selected>永久授权</option></select>
               <button id="cloud-tool-enable-all" class="button secondary" type="button">全选授权</button>
               <button id="cloud-tool-disable-all" class="button secondary" type="button">全部取消</button>
+              <button id="cloud-tool-expand-all" class="button secondary" type="button">全部展开</button>
+              <button id="cloud-tool-collapse-all" class="button secondary" type="button">全部折叠</button>
             </div>
-            <p class="field-hint">当前会话指本设备与云端的本次连接，断开或重启后失效；一次性授权只允许一次调用。终止进程仍需每次本机确认，Computer Use 每个操作会话仍需确认一次。</p>
-            <div id="cloud-tool-access-list" class="remote-tool-access-list" role="group" aria-label="远程工具权限"></div>
-            <p class="field-hint">Computer Use：新操作会话须本机确认一次，会话内不重复询问；终止进程、移动或撤销：每次执行都需本机确认。取消勾选立即撤销授权。STOP/Esc 与用户接管始终有效。</p>
+            <p class="field-hint">当前连接会话授权在断线或重启后失效；一次性授权允许一次调用；永久授权保存于本机。所有工具统一遵循该设置。</p>
+            <div id="cloud-tool-access-list" class="remote-tool-access-list" role="group" aria-label="本机工具授权"></div>
+            <p class="field-hint">本机工具授权不需要额外人工确认；系统权限、已有项目和文件访问范围仍然有效。Computer Use 的 STOP/Esc 和用户接管机制保持有效。</p>
           </section>
-          <section class="card credentials-card"><div><h2>更换或清除凭据</h2><p>替换密钥时直接输入新值。清除后会停止连接，工作目录与规则设置仍然保留。</p></div><button id="clear-credentials" class="button subtle-danger" type="button">清除凭据</button></section><div class="quiet-note"><span aria-hidden="true">ⓘ</span><p>文件工具需要先选择工作目录；MCP 扩展可以单独使用。Runtime API Key 仅用于运行通道，不能代替客户端或 API 调用方的凭据。</p></div>
         </section>
 
         <section id="panel-proxy" class="tab-panel" role="region" aria-labelledby="page-title" hidden>

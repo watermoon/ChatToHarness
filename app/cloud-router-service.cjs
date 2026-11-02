@@ -9,7 +9,7 @@ const LOCAL_VERSION=require('../package.json').version;
 const LOCAL_OS_VERSION=osProductVersion();
 const {redeem,beginDevicePairing,pollDevicePairing}=require('./cloud-router-pairing.cjs');
 class CloudRouterService {
-  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection,remoteAccess}) {
+  constructor({manager, identity, pairStore, getOwnerKey = () => '', fetcher = globalThis.fetch, log = () => {}, onChange = () => {}, WebSocketImpl = globalThis.WebSocket,socketFactory,getAccountConnection,remoteAccess,testMode=false}) {
     if (!manager || !identity?.id || !identity.platform || !identity.name)
       throw new Error('CLOUD_ROUTER_DEVICE_UNAVAILABLE');
     this.manager = manager;this.getAccountConnection=getAccountConnection;
@@ -18,6 +18,7 @@ class CloudRouterService {
     this.getOwnerKey=getOwnerKey;
     this.fetcher=fetcher;
     this.identity = identity;
+    this.testMode=testMode===true;
     this.localOsVersion=LOCAL_OS_VERSION;
     this.log = log;
     this.onChange = onChange;
@@ -47,14 +48,16 @@ class CloudRouterService {
         throw new Error('CLOUD_ROUTER_INVALID_URL');
       this.agent = connectAgent({
         url: parsed.href, token, deviceId: this.identity.id, name: this.identity.name,
-        platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
+        platform: this.identity.platform, harnessVersion:LOCAL_VERSION, osVersion:this.localOsVersion, testMode:this.testMode, WebSocketImpl: this.WebSocketImpl,socketFactory:this.socketFactory,
         catalogProvider: () => this.catalog(),
         execute: (name, args, context) => this.execute(name, args, context),
         onStatusChange: status => {if(status==='reconnecting')this.remoteAccess?.clearSessions();this.onChange(this.status());},
         onCatalogMismatch: versions => this.log('cloud-router-catalog-version-mismatch',
           {device_id:this.identity.id,...versions}),
         onCatalogError: code => this.log('cloud-router-catalog-provider-failed',
-          {device_id:this.identity.id,code})
+          {device_id:this.identity.id,code}),
+        onConnectionEvent: info=>this.log('cloud-router-agent-connection',
+          {device_id:this.identity.id,...info})
       });
       return this.status();
     } catch (error) {
@@ -243,7 +246,10 @@ class CloudRouterService {
     const invoke=async()=>{
     const broker=this.manager.broker;
     if(name==='get_harness_status'){
-      if(Object.keys(args).length)throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
+      if(Object.keys(args).some(key=>!['cursor','limit'].includes(key)) ||
+         args.cursor!==undefined&&typeof args.cursor!=='string' ||
+         args.limit!==undefined&&(!Number.isSafeInteger(args.limit)||args.limit<1||args.limit>200))
+        throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
       // Keep results in the local MCP result store so large read-only output
       // can be recovered through the same two paging tools.
       return broker?.toolCall ? broker.toolCall(name,args) : this.manager.call(name,args);
@@ -269,8 +275,8 @@ class CloudRouterService {
         throw new Error('CLOUD_ROUTER_TOOL_DENIED');
       return broker.toolCall(name,args);
     }
-    // Local grants are evaluated afresh, including after any dialog, and do not
-    // bypass McpManager's existing project, service or window authorization.
+    // The local tool list is the sole grant authority. Project, OS and native
+    // Computer Use protections remain enforced by their respective services.
     if(!this.catalog().tools.some(item=>item.name===name))
       throw Error('CLOUD_ROUTER_TOOL_DENIED');
     return this.manager.call(name,args);
@@ -287,6 +293,7 @@ class CloudRouterService {
       connected: Boolean(this.agent?.connected), device_id: this.identity.id,
       device_name: this.identity.name, platform: this.identity.platform,
       local_harness_version:LOCAL_VERSION, local_os_version:this.localOsVersion,
+      test_mode:this.testMode,
       tool_catalog_version:(()=>{try{return this.catalog().version;}catch{return '';}})(),
       tool_catalog_count:(()=>{try{return this.catalog().tools.length;}catch{return 0;}})(),
       paired:Boolean(this.mcpUrl),...(this.mcpUrl?{mcp_url:this.mcpUrl}:{}),

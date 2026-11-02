@@ -64,6 +64,76 @@ test('internal MCP dispatcher exposes only router tools (external auth is mandat
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),
     ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','list_device_tools','call_device_tool']);
 });
+test('test-mode agents coexist with production device identity without takeover or catalog writes',async()=>{
+  const f=await fixture(),live=await f.register('rocket');
+  const original=(await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:32}}))
+    .body.result.structuredContent;
+  const ongoing=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'rocket',tool_name:'get_harness_status',catalog_version:original.catalog_version,arguments:{}
+  }});
+  for(let i=0;i<100&&live.messages.length<2;i++)await new Promise(r=>setTimeout(r,5));
+  const invoke=live.messages.find(x=>x.type==='invoke');
+  assert.ok(invoke,'production invocation remains on production socket');
+  const testCatalog=catalog(['test_only_tool']);
+  const testAgent=await f.register('rocket','rocket',null,{test_mode:true,catalog:testCatalog});
+  assert.equal(testAgent.messages[0].type,'registered');
+  assert.equal(testAgent.messages[0].test_mode,true);
+  assert.equal(live.readyState,1,'production socket must remain open');
+  assert.equal(live.closeCode,undefined);
+  assert.equal(testAgent.messages.some(x=>x.type==='invoke'),false);
+  const anotherTest=await f.register('rocket','rocket',null,{test_mode:true,catalog:testCatalog});
+  assert.equal(anotherTest.messages[0].test_mode,true);
+  assert.equal(testAgent.readyState,1,'parallel test sockets do not replace one another');
+  await f.hub.webSocketMessage(testAgent,JSON.stringify({
+    type:'catalog_update',catalog:catalog(['updated_test_only'])
+  }));
+  assert.equal(testAgent.messages.at(-1).type,'catalog_ack');
+  const current=(await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:32}}))
+    .body.result.structuredContent;
+  assert.equal(current.catalog_version,original.catalog_version);
+  assert.deepEqual(current.tools,original.tools);
+  const devices=JSON.parse((await f.mcp('tools/call',{name:'list_devices'})).body.result.content[0].text);
+  assert.equal(devices.find(x=>x.device_id==='rocket').online,true);
+  const bad=await f.register('rocket','rocket','bad-token',{test_mode:true});
+  assert.equal(bad.closeCode,1008);
+  assert.equal(live.readyState,1);
+  await f.hub.webSocketMessage(live,JSON.stringify({
+    type:'result',request_id:invoke.request_id,result:{source:'production'}
+  }));
+  const done=await ongoing;
+  assert.equal(done.status,200);
+  assert.deepEqual(JSON.parse(done.body.result.content[0].text),{source:'production'});
+  assert.equal(testAgent.messages.some(x=>x.type==='invoke'),false);
+});
+test('test connection quota is isolated and cannot consume production socket capacity',async()=>{
+ const f=await fixture();
+ const testConnections=[];
+ for(let i=0;i<8;i++){
+   const ws=await f.register('rocket','rocket',null,{test_mode:true});
+   assert.equal(ws.messages[0].test_mode,true);
+   testConnections.push(ws);
+ }
+ const overflow=await f.register('rocket','rocket',null,{test_mode:true});
+ assert.equal(overflow.closeCode,1013,'ninth test connection rejected without replacing others');
+ assert.ok(testConnections.every(ws=>ws.readyState===1));
+ const production=await f.register('rocket');
+ assert.equal(production.messages[0].type,'registered');
+ assert.equal(production.readyState,1,'production still registers at test quota');
+ assert.ok(testConnections.every(ws=>ws.readyState===1));
+});
+test('test-only connections do not appear online when production is disconnected',async()=>{
+  const f=await fixture();
+  const testAgent=await f.register('rocket','rocket',null,{test_mode:true});
+  assert.equal(testAgent.messages[0].test_mode,true);
+  const devices=JSON.parse((await f.mcp('tools/call',{name:'list_devices'})).body.result.content[0].text);
+  assert.equal(devices.find(x=>x.device_id==='rocket').online,false);
+  const tools=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:10}});
+  assert.equal(tools.body.result.structuredContent.online,false);
+  const called=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'rocket',tool_name:'get_harness_status',catalog_version:'0'.repeat(64),arguments:{}
+  }});
+  assert.equal(JSON.parse(called.body.result.content[0].text).code,'DEVICE_OFFLINE');
+});
 test('devices are independently authenticated and listed', async () => {
   const f = await fixture();
   const bad = await f.register('moon', 'MOON', 'wrong');
@@ -156,6 +226,70 @@ test('unknown/offline target cannot fail over, and tools require cloud allowlist
   assert.equal(await call('mac', 'get_harness_status'), 'DEVICE_OFFLINE');
   assert.equal(await call('moon', 'start_process'), 'TOOL_DENIED');
   assert.equal(await call('', 'get_harness_status'), 'BAD_REQUEST');
+});
+test('invalid stored catalog triggers bounded same-device reconnect and auto-republication',async()=>{
+ const f=await fixture(),old=await f.register('rocket');
+ await f.hub.ctx.storage.put('catalog:rocket',{schema_version:1,version:'a'.repeat(64),tools:[]});
+ const failed=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:10}});
+ assert.equal(JSON.parse(failed.body.result.content[0].text).code,'DEVICE_CATALOG_UNAVAILABLE');
+ assert.equal(old.closeCode,4009);
+ const newer=await f.register('rocket');
+ assert.equal(newer.messages[0].type,'registered');
+ const restored=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:10}});
+ assert.equal(restored.body.result.structuredContent.tools.length,3);
+});
+test('socket takeover transparently resends safe read-only status once on the same device',async()=>{
+  const f=await fixture();
+  const old=await f.register('rocket');
+  const call=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'rocket',tool_name:'get_harness_status',catalog_version:'0'.repeat(64),arguments:{limit:1}
+  }});
+  for(let i=0;i<100&&old.messages.length<2;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(old.messages[1].type,'invoke');
+  const newer=await f.register('rocket');
+  assert.equal(old.closeCode,1000);
+  assert.equal(newer.messages[0].type,'registered');
+  assert.match(newer.messages[0].connection_id,/^[0-9a-f-]{36}$/);
+  assert.equal(newer.messages[1].type,'invoke');
+  assert.equal(newer.messages[1].request_id,old.messages[1].request_id);
+  await f.hub.webSocketMessage(newer,JSON.stringify({type:'result',
+    request_id:newer.messages[1].request_id,result:{status:'ready'}}));
+  const answer=await call;
+  assert.equal(answer.status,200);
+  assert.deepEqual(JSON.parse(answer.body.result.content[0].text),{status:'ready'});
+});
+test('rolling upgrade accepts legacy per_call catalog and preserves its hash',async()=>{
+  const f=await fixture();
+  f.env.ALLOWED_TOOLS+=',start_task';
+  const oldTool={name:'start_task',description:'Legacy shell tool',
+    inputSchema:{type:'object',properties:{command:{type:'string'}}},
+    annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:false},
+    remoteGrant:{mode:'per_call'}};
+  const tools=[oldTool],version=createHash('sha256').update(JSON.stringify({schema_version:1,tools})).digest('hex');
+  const ws=await f.register('legacy','legacy',null,{catalog:{schema_version:1,version,tools}});
+  assert.equal(ws.messages[0].type,'registered');
+  const listing=await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'legacy',limit:10}});
+  assert.equal(listing.body.result.structuredContent.catalog_version,version);
+  assert.equal(listing.body.result.structuredContent.tools[0].remoteGrant.mode,'per_call');
+});
+test('socket takeover never replays executing commands even if new socket is online',async()=>{
+  const f=await fixture();
+  f.env.ALLOWED_TOOLS+=',start_task';
+  const mutable={name:'start_task',description:'run command',inputSchema:{type:'object',
+    properties:{command:{type:'string'}}},annotations:{
+    readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:false},
+    remoteGrant:{mode:'scoped'}};
+  const tools=[mutable],version=createHash('sha256').update(JSON.stringify({schema_version:1,tools})).digest('hex');
+  const grant={schema_version:1,version,tools};
+  const old=await f.register('rocket','rocket',null,{catalog:grant});
+  const call=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+    device_id:'rocket',tool_name:'start_task',catalog_version:version,arguments:{command:'echo hi'}
+  }});
+  for(let i=0;i<100&&old.messages.length<2;i++)await new Promise(r=>setTimeout(r,5));
+  const newer=await f.register('rocket','rocket',null,{catalog:grant});
+  assert.equal(newer.messages.length,1,'new socket must not re-execute mutable operation');
+  const result=await call;
+  assert.equal(JSON.parse(result.body.result.content[0].text).code,'DEVICE_DISCONNECTED');
 });
 test('disconnect reports unknown execution, never replays on other device', async () => {
   const f = await fixture();

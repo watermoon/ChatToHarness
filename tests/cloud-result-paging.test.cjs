@@ -54,7 +54,8 @@ test('authenticated Worker publishes two device-scoped paging tools and preserve
  assert.deepEqual(sent.map(x=>x.tool_name),['get_tool_result_page','get_tool_result_file']);
  assert.deepEqual(sent[0].arguments,{result_id:RESULT,offset:64,length:512});
  assert.deepEqual(sent[1].arguments,{result_id:RESULT,file_index:0});
- const forbidden=await rpc('tools/call',{name:'call_device_tool',arguments:{device_id:ID,tool_name:'start_process',catalog_version:'0'.repeat(64),arguments:{}}});
- assert.match(JSON.stringify(forbidden),/TOOL_DENIED/);
- assert.equal(sent.length,2);
+ const routed=await rpc('tools/call',{name:'call_device_tool',arguments:{device_id:ID,tool_name:'start_process',catalog_version:'0'.repeat(64),arguments:{}}});
+ assert.match(JSON.stringify(routed),/read-only/);
+ assert.equal(sent.length,3,'cloud does not impose a second tool allowlist');
+ assert.equal(sent.at(-1).tool_name,'start_process');
 });

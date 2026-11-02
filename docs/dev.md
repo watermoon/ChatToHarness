@@ -1,3 +1,57 @@
+## 2026-11-02 连接配置内部并排双标签与独立本机工具授权
+
+- 左侧将原“连接配置”明确改为“安全通道配置”，保留 Tunnel ID、Runtime API Key、代理入口、凭据更换与清除。
+- 左侧**仅保留一个「安全通道配置」入口**。进入右侧内容页后，顶部并排显示「安全通道配置」「Cloudflare MCP 通道配置」两个内部标签（不是左侧子菜单）；默认显示 Tunnel 表单，第二标签完整保留云端服务、Cloudflare 初始化、Owner Key 管理、多设备配对、重连和设备列表；仅该内页可见时刷新设备列表。
+- 原“本机工具授权”改为独立左侧菜单及完整右侧页面；保留本机工具列表、分组折叠、全部授权/取消、一次性/当前会话/永久有效期、自动允许开关和其本机二次确认。工具清单仍经本机 IPC 获取，不依赖 Cloudflare 目录。
+- 更新 `tabNames`、`pages`、内部 `role=tablist`/tabpanel、键盘左右方向键和中英日翻译。左侧「本机工具授权」仍是独立菜单和右侧全宽工具列表；代理子页面由 Tunnel 配置进入。Cloudflare 不是新的左侧菜单。
+- 回归测试：连接配置内部并排双标签、Cloudflare 不出现在左侧、键盘切换、权限页独立的专项测试 38/38 通过；隔离 Electron GUI 冒烟通过中英日页面、Tunnel 表单及 Cloudflare 配对入口切换；工具授权页完整宽度检查通过（授权主卡宽度 ≥ 页面可用宽度 92%）。
+- 未重新构建当前运行的桌面程序，亦未部署云端 Worker（该工作仅改本机 UI）。rocket 构建仍固定在 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked`，不创建 feature 目录、不覆盖运行中的 EXE。
+
+## 2026-11-02 本地工具授权：默认自动允许及有效期选择
+
+- 根据用户后续需求：工具列表维持**单层本机授权**，授权有效期用一个下拉框（一次性／当前连接会话／永久授权）加单个允许操作，选择后在本机 `remote-tool-grants.json` 记录 `last_scope`，下次刷新或应用重启时默认选中上次选择。取消授权不会覆盖这一偏好。
+- 在工具列表中新增默认开启的「自动允许授权请求」开关，自动允许有效期另有「当前连接会话／永久允许」两种模式（新用户默认当前连接会话）。自动策略仅作用于**没有显式授权记录**的工具，明确取消始终优先；自动策略在本机保存为 `auto_allow` 与 `auto_scope`，老 `schema_version:1/2` 的布尔权限数据继续兼容。
+- 开启或变更已经启用的自动允许策略时，由主进程调用 Electron 原生 `dialog.showMessageBox` 进行明确二次确认。取消确认不会修改策略；关闭自动允许不需要确认。该确认发生在**用户更改本地策略时**，不属于每次远端工具调用人工确认，`start_task` 不得重新出现 UnifyHarness 二次确认。
+- 当自动允许选「当前连接会话」，下一条连接会按照仍开启的自动策略自动授权未单独配置的工具，自动策略的设置仍然持久保存；用户手动设置的 session/once 授权只对所选择的连接或一次调用有效，失效后保持显式拒绝。
+- System/OS 权限、路径范围、Computer Use STOP/Esc 与用户接管继续生效。维护 rocket 唯一构建输出 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked`，运行时不强制覆盖 EXE。专项测试 `tests/remote-tool-scopes.test.cjs` 和 `tests/mcp-ui.test.cjs` 共 50/50 PASS；完整 Node 测试 742 PASS / 19 SKIP / 0 FAIL；隔离 Electron UI 冒烟 `node scripts/ui-smoke.cjs --dev` 通过（zh-CN、en、ja，含新下拉模式翻译）。此次仅本地 UI/授权策略调整，不需要重新部署 Cloudflare Worker；新版 EXE 尚未构建或运行，实际本机确认弹窗交互仍待新版实机验收。
+
+## 2026-11-02 测试设备连接与正式设备连接隔离（rocket）
+
+- 问题：原 Worker 将同一 `device_id` 的所有新 `register` 都视为正式重连；开发过程中运行第二个测试客户端会触发 `Replaced by newer connection`，中断正式工具请求，出现 `DEVICE_DISCONNECTED`。
+- Agent 注册新增 `test_mode:true` 显式标记，仅在测试连接使用，沿用现有设备绑定令牌认证；缺失标记继续采用正式连接的旧协议。Server `registered` 应答带相同标记，Agent 严格验证回应模式一致。
+- Worker 将测试连接仅保存在 WebSocket 附件中，绝不写入正式 `catalog:<device_id>` 与设备状态/工具目录，也不接管、关闭正式 WebSocket；正式设备在线判断及 `currentSocket` 和执行请求排除测试连接。测试连接的 `catalog_update` 仅校验、回复 ACK，不写持久存储；测试连接不能通过生产 `call_device_tool` 选中（仅用于连接和目录同步测试）。
+- 每个 Worker 实例最多八条已认证测试连接；测试 socket 不消耗正式连接的配额。正式客户端仍按原认证、目录及接管流程运行；测试客户端拒绝无效设备令牌，测试连接不使未连接的正式设备显示在线。
+- 开发源码模式 `!app.isPackaged` 及已有隔离验收 `LOCALHARNESS_TEST_MODE` 会自动开启测试连接；正式打包默认关闭；需要通过已打包诊断客户端测试时可设置环境变量 `CTH_CLOUD_AGENT_TEST_MODE=1` 再启动。界面当前设备名称显示「测试连接」标识，服务状态返回 `test_mode`。
+- 自动化验证：同 `device_id` 生产请求处理中测试连接注册、两个测试连接并发、模拟测试目录更新、错误令牌拒绝、测试连接独立在线状态、最多八条测试连接单独配额、正式响应保持。禁止测试连接使用正式目录读写或生产路由。2026-11-02 全量 Node 739 PASS / 19 SKIP / 0 FAIL，两套 Wrangler dry-run PASS，隔离源码 GUI 冒烟 PASS。Worker 已部署版本 `74929f57-a659-4752-8ae3-960ba1d29999`；部署后使用统一插件确认 rocket 仍在线、云端目录 51 工具且 `get_harness_status` 返回 Ready。现场第二客户端并发仍需另行实机复验。
+- Windows 构建始终写入固定 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked`。不得新建 feature 专用构建目录；旧桌面程序正在运行时不覆盖构建，先进行源码及 Worker 测试。
+
+## 2026-11-02 统一为本地工具列表单层授权（以本节为准）
+
+- 用户最新明确决策：UnifyHarness 远程服务默认可以发现并发起所有本地已注册的 MCP 工具，**工具授权仅在 ChatToHarness 本机工具列表中完成**；此前文档中「工具调用授权 + 额外人工二次确认弹窗」的规则在新设计中废止。
+- 本地工具授权未配置时默认为永久允许（历史本地拒绝规则继续保留）；工具列表支持显式授权/取消、一次性/当前连接会话/永久；操作执行之前在设备端重新检查最新本地授权。一次性执行后失效；当前连接会话授权断线/程序重启失效；永久授权本机持久化。撤销并不影响远端能否看见工具定义，但远程调用会被本机拒绝。
+- 删除旧 `RemoteToolAccess` 中的本机二次 `approve()` 弹窗流程及额外「远程操作确认」持久文件读取写入；`main.cjs` 不再设置 UnifyHarness 远程操作确认对话框；权限列表点击不再弹出额外敏感工具确认。包括 `start_task`、进程管理和 Computer Use 在内均以本机工具列表为唯一工具授权配置。
+- Cloudflare Worker 仅验证账号/设备身份、工具目录和请求格式，转发至对应设备；删除 Worker 的第二层逐工具 `ALLOWED_TOOLS` 授权白名单。工具目录仅根据本地工具定义生成，与授权开关状态分离，因而变更授权不会导致 `CATALOG_VERSION_STALE`。
+- **保留原有非工具授权保护**：MCP Manager 的本地项目/路径范围、操作系统安全权限、Computer Use 的有效 session ID、STOP/Esc 和用户接管、已知执行状态不明时不得自动重放写入等。它们不等于另一个 UnifyHarness 工具授权弹窗。
+- 验收：全部 Node 自动化用例 734 PASS、19 SKIP、0 FAIL；Worker 以及 OAuth Worker `npm run check` 双 dry-run PASS；`node scripts/ui-smoke.cjs --dev` 隔离 GUI 测试 PASS。Worker 已部署版本 `0180477d-2184-4a0d-913d-5a97989b7401`；统一插件 `get_harness_status` 已实测返回 Ready，云端 51 个工具（仍为旧桌面构建），本地 53 个工具。新版本 EXE 尚未重建/启动，必须随后进行本机授权 UI 实机复验。**在用户运行的旧程序退出前，不得覆盖固定 `dist/win-unpacked` 构建目录，不得创建 feature 专属输出目录。**
+
+## 2026-11-02 同设备连接接管与远程操作确认有效期（rocket）
+
+- 确认用户截图中 `start_task` 已有永久「工具调用授权」，但旧版每次仍弹窗；原因是 `remote-tool-access.cjs` 将 `start_task` 归入 `per_call` 且把弹窗授权范围错误写回工具 grant，故当前连接/永久按钮不能免重复确认。修复为独立于工具 grant 的本机操作确认有效期：`start_task`、`start_process`、`interact_with_process`、`set_config_value` 使用 `scoped`，一次性每次提示、当前连接会话内免重复提示、永久确认本地落盘且重启保留。禁用工具授权即清除确认；连接重建清除 session 确认。远端不能直接写操作确认状态。
+- `kill_process`、`force_terminate`、`move_file`、`undo_project_edit` 保持逐次操作确认；Computer Use 每个新操作会话仍要求本机确认，STOP/Esc/用户接管机制不变。逐次操作弹窗只出现「允许这一次/拒绝」，避免显示无效永久按钮。
+- Worker：新增唯一 connection_id、设备重连/关闭原因、受影响未完成请求数量日志；同一 device_id 新连接替换旧连接时，只有已明确标记为只读/非破坏/封闭世界且工具定义和目录版本未变化的请求才可迁移并安全重发一次；命令/写入等副作用不明操作立即明确报错且不重放。
+- Worker 同时支持旧版 `per_call` 与新版 `scoped` 目录模式，并在哈希校验时保留旧客户端原始值以避免版本冲突；发现无效目录存储时对该设备限频触发重新连接和目录发布，避免长期 `DEVICE_CATALOG_UNAVAILABLE`。
+- 自动化：旧/新 grant 共存、会话和永久操作确认、断线失效、强制操作确认、只读连接迁移、写操作拒绝重放、旧版目录哈希兼容、无效目录限频重连均有用例；最新全量 734 通过/19 跳过/0 失败，额外云端目录专项 25/25、18/18 通过；`npm run check` 两个 Worker dry-run 通过；`node scripts/ui-smoke.cjs --dev` 的隔离 GUI 冒烟通过。最新 Worker 已部署 `28ceb93b-589e-4512-9078-f26ed6d782e2`，交互确认默认超时增加到 120 秒（有界、禁止不确定执行重放）。
+- 统一插件实测：rocket 在云端恢复 51 个已发布工具，`get_harness_status` 返回 Ready，本机 Harness 状态为 53 个可用工具。当前桌面程序仍为此前 `1bef3fb` 构建，尚未加载新的弹窗逻辑；由于固定 `dist/win-unpacked` 目录中可执行文件正在运行，不能边运行边覆盖构建，不创建 feature 目录。
+- 未对实际用户任务执行 `start_task` 授权确认；隔离单元测试不能替代新版打包的交互实机验收。后续关闭旧应用后在固定目录执行 `npm run build` 并重新启动，确认本次连接/永久确认确实不重复出现。
+
+## 2026-11-02 远程授权弹窗、分组折叠及状态调用修复（rocket）
+
+- 发现远程 `get_harness_status` 的目录声明允许 `limit/cursor`，但 `CloudRouterService.execute` 拒绝所有非空参数。改为逐字段验证并原样传至 McpGateway，保留非法参数拒绝。Worker 的状态查询超时预算从默认 15 秒调整为至多 30 秒，不自动重放执行状态未知的调用。
+- 将高风险操作弹窗从单一「允许这一次」改为明确的 `一次性/当前连接会话/永久授权/拒绝` 选项，提示当前工具已授权有效期；选择会更新工具请求授权的有效期，仍保留本次操作确认。永久授权不绕过 Computer Use 每个新操作会话、本机终止进程等高风险操作的强制确认；STOP/Esc 与用户接管不变。
+- 权限管理中的各组支持独立折叠与展开，新增全部展开/全部折叠；组折叠状态在刷新和语言切换后保留，收起时仍可组级授权/取消。
+- 回归涵盖授权范围变更与二次确认不能绕过、状态分页参数契约、英文动态选项以及 UI 折叠/刷新；固定构建输出为 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked`，不再建立 feature 目录。
+- 注意：部署或旧程序未退出前，统一插件上的表现仍对应旧版本。最终验收需以新版本实测返回为准，不能把自动化测试当作实机通过。
+
 ## 2026-11-02 UnifyHarness 设备目录失效修复（rocket）
 
 - 统一 UnifyHarness 线上复现：rocket 在线，Worker 列出的 28 个工具目录版本为 `a422037999634ded4b6f972f0bfecd02e9a29e4a0c2cabc087c11ff29c17ccdc`；`get_harness_status`、`list_usb_devices`、`list_serial_ports` 在设备端校验前置步骤返回 `DEVICE_TOOL_ERROR: CATALOG_VERSION_STALE`。

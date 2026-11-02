@@ -12,29 +12,24 @@ const manager=()=>({visibleTools:()=>[
  def('force_terminate',mutable),def('computer_use',visual),
  def('read_file',{...safe,openWorldHint:true})
 ]});
-function create(t,approve=async()=>false){
+function create(t,approve=async()=>false,manager){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'remote-tool-grant-test-'));
  t.after(()=>fs.rmSync(home,{force:true,recursive:true}));
- return {home,access:new RemoteToolAccess({home,approve})};
+ return {home,access:new RemoteToolAccess({home,manager,approve})};
 }
-test('tool grants are local, explicit, persistent; default remote catalog stays read-only',t=>{
+test('all local tools are remotely discoverable; the local grant is the sole authority',async t=>{
  const m=manager(),{home,access}=create(t);
- assert.deepEqual(createDeviceCatalog(m,access).tools.map(x=>x.name),['git_status']);
- assert.equal(access.list(m).total,6);
- assert.equal(access.list(m).remote_count,1);
- access.set(m,{name:'write_file',enabled:true});
- access.set(m,{name:'computer_use',enabled:true});
- access.set(m,{name:'read_file',enabled:true});
- const catalog=createDeviceCatalog(m,access);
- assert.deepEqual(catalog.tools.map(x=>x.name),['computer_use','git_status','read_file','write_file']);
- assert.deepEqual(catalog.tools.find(x=>x.name==='computer_use').remoteGrant,{mode:'session'});
- assert.equal(catalog.tools.find(x=>x.name==='computer_use').annotations.openWorldHint,true);
- assert.deepEqual(catalog.tools.find(x=>x.name==='write_file').remoteGrant,{mode:'persistent'});
- assert.equal(catalog.tools.find(x=>x.name==='git_status').remoteGrant,undefined);
+ const initial=createDeviceCatalog(m,access);
+ assert.deepEqual(initial.tools.map(x=>x.name),['computer_use','force_terminate','git_status','kill_process','read_file','write_file']);
+ assert.equal(access.list(m).remote_count,6);
+ access.set(m,{name:'write_file',enabled:false});
+ assert.equal(createDeviceCatalog(m,access).version,initial.version);
+ assert.ok(createDeviceCatalog(m,access).tools.some(x=>x.name==='write_file'));
+ await assert.rejects(access.before(def('write_file',mutable),{}),/NOT_GRANTED/);
  const fresh=new RemoteToolAccess({home});
- assert.equal(fresh.list(m).remote_count,4);
- fresh.set(m,{name:'computer_use',enabled:false});
- assert.equal(createDeviceCatalog(m,fresh).tools.some(x=>x.name==='computer_use'),false);
+ assert.equal(fresh.enabled(def('write_file',mutable)),false);
+ fresh.set(m,{name:'write_file',enabled:true});
+ assert.equal(fresh.enabled(def('write_file',mutable)),true);
  assert.throws(()=>fresh.set(m,{name:'not_real',enabled:true}),/UNKNOWN_TOOL/);
 });
 test('Computer Use requires one consent per operation session, not per click',async t=>{
@@ -48,34 +43,56 @@ test('Computer Use requires one consent per operation session, not per click',as
  await access.before(cu,{action:'observe',session_id:'operation-1'});
  await access.before(cu,{action:'click',session_id:'operation-1'});
  await access.before(cu,{action:'type',session_id:'operation-1'});
- assert.equal(prompts,1);
+ assert.equal(prompts,0);
  const closing=await access.before(cu,{action:'close_session',session_id:'operation-1'});
  access.after(closing,{structuredContent:{closed:true}});
  await assert.rejects(access.before(cu,{action:'observe',session_id:'operation-1'}),/NOT_APPROVED/);
  const second=await access.before(cu,{action:'open_session',session_title:'other window'});
  access.after(second,{structuredContent:{session_id:'operation-2'}});
- assert.equal(prompts,2);
+ assert.equal(prompts,0);
  access.set(m,{name:'computer_use',enabled:false});
  await assert.rejects(access.before(cu,{action:'click',session_id:'operation-2'}),/NOT_GRANTED/);
 });
-test('destructive process termination requires approval for every call',async t=>{
+test('local scope applies to all tools without an extra confirmation layer',async t=>{
  let approvals=0;
- const {access}=create(t,async()=>++approvals===1);
+ const m={visibleTools:()=>[...manager().visibleTools(),def('start_task',mutable)]};
+ const task=def('start_task',mutable),kill=def('kill_process',mutable),cu=def('computer_use',visual);
+ const {access,home}=create(t,async()=>{approvals++;throw Error('SECOND_DIALOG_NOT_ALLOWED')},m);
+ access.set(m,{name:'start_task',enabled:true,scope:'once'});
+ access.finish(await access.before(task,{command:'one'}));
+ assert.equal(access.enabled(task),false);
+ await assert.rejects(access.before(task,{command:'again'}),/NOT_GRANTED/);
+ access.set(m,{name:'start_task',enabled:true,scope:'session'});
+ access.finish(await access.before(task,{command:'two'}));
+ access.finish(await access.before(task,{command:'three'}));
+ access.clearSessions();
+ assert.equal(access.enabled(task),false);
+ access.set(m,{name:'start_task',enabled:true,scope:'permanent'});
+ const restarted=new RemoteToolAccess({home});
+ assert.equal(restarted.enabled(task),true);
+ restarted.finish(await restarted.before(task,{command:'four'}));
+ await access.before(kill,{pid:10});
+ await access.before(kill,{pid:11});
+ const first=await access.before(cu,{action:'open_session',session_title:'first'});
+ access.after(first,{structuredContent:{session_id:'test-1'}});
+ await access.before(cu,{action:'observe',session_id:'test-1'});
+ await access.before(cu,{action:'open_session',session_title:'second'});
+ assert.equal(approvals,0,'tool list is the only authorization interface');
+});
+
+test('termination uses only local tool grants and respects expiry and revocation',async t=>{
+ let approvals=0;
+ const {access}=create(t,async()=>{approvals++;throw Error('NO_DIALOG_ALLOWED')});
  const m=manager(),kill=def('kill_process',mutable);
- access.set(m,{name:'kill_process',enabled:true});
  await access.before(kill,{pid:123});
- await assert.rejects(access.before(kill,{pid:123}),/USER_DECLINED/);
- assert.equal(approvals,2);
+ await access.before(kill,{pid:456});
+ assert.equal(approvals,0);
  await assert.rejects(access.before(kill,{pid:123},{expiresAt:Date.now()-1}),/REQUEST_EXPIRED/);
- assert.equal(approvals,2);
  access.set(m,{name:'kill_process',enabled:false});
  await assert.rejects(access.before(kill,{pid:123}),/NOT_GRANTED/);
 });
-test('denied approvals, expiry and disconnect never authorize input',async t=>{
- const {access}=create(t,async()=>false),m=manager(),cu=def('computer_use',visual);
- access.set(m,{name:'computer_use',enabled:true});
- await assert.rejects(access.before(cu,{action:'open_session'}),/USER_DECLINED/);
- access.approve=async()=>true;
+test('expired requests and disconnects cannot reuse a native control session',async t=>{
+ const {access}=create(t,async()=>{throw Error('NO_DIALOG_ALLOWED')}),cu=def('computer_use',visual);
  await assert.rejects(access.before(cu,{action:'open_session'},{expiresAt:Date.now()-1}),/REQUEST_EXPIRED/);
  const gate=await access.before(cu,{action:'open_session'});
  access.after(gate,{structuredContent:{session_id:'s1'}});
@@ -85,26 +102,22 @@ test('denied approvals, expiry and disconnect never authorize input',async t=>{
 
 
 
-test('remote terminal commands cannot bypass per-call confirmation',async t=>{
+test('terminal commands never trigger a second authorization dialog',async t=>{
  let confirmed=0;
- const {access}=create(t,async()=>{confirmed++;return true;});
  const shell=def('start_task',mutable),m={visibleTools:()=>[shell]};
- access.set(m,{name:'start_task',enabled:true});
- assert.equal(access.mode('start_task'),'per_call');
+ const {access}=create(t,async()=>{confirmed++;throw Error('NO_DIALOG_ALLOWED')},m);
  await access.before(shell,{command:'echo safe'});
- await access.before(shell,{command:'echo safe'});
- assert.equal(confirmed,2);
+ await access.before(shell,{command:'echo again'});
+ access.set(m,{name:'start_task',enabled:false});
+ await assert.rejects(access.before(shell,{command:'echo denied'}),/NOT_GRANTED/);
+ assert.equal(confirmed,0);
 });
-test('revoking a grant while confirmation is open rejects the delayed approval',async t=>{
- let respond;
- const {access}=create(t,()=>new Promise(resolve=>{respond=resolve;}));
+test('revocation invalidates outstanding operation generation',async t=>{
+ const {access}=create(t);
  const action=def('kill_process',mutable),m=manager();
- access.set(m,{name:'kill_process',enabled:true});
- const pending=access.before(action,{pid:345});
- await new Promise(resolve=>setImmediate(resolve));
+ const token=await access.before(action,{pid:345});
  access.set(m,{name:'kill_process',enabled:false});
- respond(true);
- await assert.rejects(pending,/REMOTE_GRANT_REVOKED/);
+ assert.throws(()=>access.after(token,{ok:true}),/REMOTE_GRANT_REVOKED/);
 });
 test('listing windows is allowed after tool opt-in without granting control of a session',async t=>{
  let prompts=0;

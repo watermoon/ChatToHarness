@@ -291,6 +291,27 @@ function registerIPC(){
   bind('cloud-router-list-devices',async()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.refreshDevices();});
   bind('cloud-router-tool-permissions',()=>{if(!remoteToolAccess||!mcpManager)throw Error('CLOUD_ROUTER_UNAVAILABLE');return remoteToolAccess.list(mcpManager);});
   bind('cloud-router-tool-grant',input=>{if(!remoteToolAccess||!mcpManager)throw Error('CLOUD_ROUTER_UNAVAILABLE');return remoteToolAccess.set(mcpManager,input);});
+  bind('cloud-router-auto-allow',async input=>{
+    if(!remoteToolAccess||!mcpManager)throw Error('CLOUD_ROUTER_UNAVAILABLE');
+    if(typeof input?.enabled!=='boolean'||!['session','permanent'].includes(input.scope))
+      throw Error('REMOTE_GRANTS_INVALID_ARGUMENTS');
+    const changed=remoteToolAccess.autoAllow!==input.enabled||remoteToolAccess.autoScope!==input.scope;
+    // A local, native confirmation is required when enabling or changing
+    // an active automatic permission policy. This is not a per-call prompt.
+    if(changed&&input.enabled){
+      if(quitting||installing||!window||window.isDestroyed())throw Error('REMOTE_AUTO_ALLOW_CANCELLED');
+      const reply=await dialog.showMessageBox(window,{
+        type:'warning',title:t('自动授权安全确认'),
+        message:t('允许自动批准远程工具请求？'),
+        detail:t('启用后，未单独配置的工具将自动允许执行，包括终端、文件和进程操作。')+'\n'+
+          t('默认授权范围：')+t(input.scope==='permanent'?'永久允许':'当前连接会话')+'\n'+
+          t('已明确禁用的工具保持禁用；此确认只发生在更改自动授权策略时。'),
+        buttons:[t('确认启用'),t('取消')],defaultId:1,cancelId:1,noLink:true
+      });
+      if(reply.response!==0)throw Error('REMOTE_AUTO_ALLOW_CANCELLED');
+    }
+    return remoteToolAccess.setAutoAllow(input);
+  });
   bind('cloud-router-disconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.disconnect();});
   bind('cloud-router-reconnect',()=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.reconnect();});
   bind('cloud-router-auto-pair',async input=>{if(!cloudRouter)throw Error('CLOUD_ROUTER_UNAVAILABLE');return cloudRouter.autoPair({mcpUrl:input?.mcpUrl,openExternal:url=>shell.openExternal(url)});});
@@ -389,27 +410,16 @@ else{
       mcpManager.history=history;
       mcpManager.broker=new McpGateway(mcpManager);runtime.gateway=mcpManager;
       const {RemoteToolAccess}=require('./remote-tool-access.cjs');
-      remoteToolAccess=new RemoteToolAccess({home,onChange:()=>cloudRouter?.catalogChanged(),
-        approve:async ({kind,name,args})=>{
-          if(quitting||installing||!window||window.isDestroyed())return false;
-          // Local user approval, not a remotely supplied setting or MCP response.
-          // Show the actual operation arguments to the local authorizing user.
-          const target=JSON.stringify(args).slice(0,4000);
-          show();
-          const reply=await dialog.showMessageBox(window,{
-            type:'warning',title:t('UnifyHarness 远程操作授权'),
-            message:kind==='session'?t('允许本次 Computer Use 操作会话？'):t('允许执行本次高风险操作？'),
-            detail:t('当前设备：')+computerUse.deviceIdentity.name+'\n'+t('工具：')+name+'\n'+t('目标：')+target+
-              '\n'+(kind==='session'?t('仅本次会话有效；STOP/Esc 和用户接管始终有效。'):t('本次确认不授权下一次调用。')),
-            buttons:[t('允许这一次'),t('拒绝')],defaultId:1,cancelId:1,noLink:true
-          });
-          return reply.response===0;
-        }});
+      remoteToolAccess=new RemoteToolAccess({home,manager:mcpManager,
+        onChange:()=>cloudRouter?.catalogChanged()});
       // Desktop pairing is opt-in, but once paired the agent reconnects on app start.
       // Never alter the current Secure MCP Tunnel until real multi-device acceptance.
       const {CloudRouterService}=require('./cloud-router-service.cjs');
       const {CloudPairingStore}=require('./cloud-router-pairing.cjs');
       cloudRouter=new CloudRouterService({getAccountConnection:input=>cloudBootstrap.accountConnection(input),fetcher:harnessNetwork.fetcher,socketFactory:harnessNetwork.createWebSocket,manager:mcpManager,identity:computerUse.deviceIdentity,
+        // Source/acceptance launches must never evict a packaged client on
+        // the same device. Packaged diagnostic clients may explicitly opt in.
+        testMode:!app.isPackaged||testMode||process.env.CTH_CLOUD_AGENT_TEST_MODE==='1',
         pairStore:new CloudPairingStore(home,safeStorage),log,onChange:publish,remoteAccess:remoteToolAccess,
          getOwnerKey:requestedUrl=>{
            try{

@@ -496,6 +496,60 @@ test('live command failures display a localized exit code',async()=>{
   assert.equal(i18n.translate('ja','退出码 {code}',{code:23}),'終了コード 23');
 });
 
+test('Cloudflare is an internal sibling tab inside secure tunnel; tool grants remain independent',async()=>{
+  const secure=html.indexOf('id="panel-connection"');
+  const cloud=html.indexOf('id="panel-cloud"');
+  const tools=html.indexOf('id="panel-tool-access"');
+  const proxy=html.indexOf('id="panel-proxy"');
+  assert.ok(secure>0&&cloud>secure&&tools>cloud&&proxy>tools);
+  const secureHtml=html.slice(secure,cloud),cloudHtml=html.slice(cloud,tools),toolHtml=html.slice(tools,proxy);
+  assert.match(secureHtml,/id="tunnel-id"/);
+  assert.match(secureHtml,/id="clear-credentials"/);
+  assert.doesNotMatch(secureHtml,/id="cloud-mcp-url"|id="cloud-tool-access-list"/);
+  assert.match(cloudHtml,/id="cloud-setup-heading"/);
+  assert.match(cloudHtml,/id="cloud-pair-heading"/);
+  assert.match(cloudHtml,/id="cloud-device-list"/);
+  assert.doesNotMatch(cloudHtml,/id="cloud-tool-access-list"/);
+  assert.match(toolHtml,/id="cloud-tool-access-list"/);
+  assert.match(toolHtml,/id="cloud-tool-auto-allow"/);
+  assert.match(toolHtml,/id="cloud-tool-bulk-scope"/);
+  assert.doesNotMatch(toolHtml,/id="cloud-mcp-url"/);
+  assert.doesNotMatch(html,/id="nav-cloud"/,'Cloudflare is not a separate left sidebar item');
+  assert.match(secureHtml,/id="channel-tunnel-tab"[^>]*aria-controls="channel-tunnel"/);
+  assert.match(secureHtml,/id="channel-cloud-tab"[^>]*aria-controls="panel-cloud"/);
+  for(const [nav,tab] of [['nav-connection','connection'],['nav-tool-access','tool-access']]){
+    assert.match(html,new RegExp('id="'+nav+'"[^>]*aria-controls="panel-'+tab+'"'));
+  }
+  const f=await rendererFixture(initialState(),{
+    cloudRouterToolPermissions:async()=>({tools:[],total:0,remote_count:0,
+      preferred_scope:'permanent',auto_allow:true,auto_scope:'session'}),
+    cloudRouterListDevices:async()=>({devices:[]}),
+  });
+  await f.node('nav-connection').emit('click');await settled();
+  assert.equal(f.node('panel-connection').hidden,false);
+  assert.equal(f.node('channel-tunnel').hidden,false);
+  assert.equal(f.node('panel-cloud').hidden,true);
+  assert.equal(f.node('channel-tunnel-tab').attributes['aria-selected'],'true');
+  await f.node('channel-cloud-tab').emit('click');await settled();
+  assert.equal(f.node('panel-connection').hidden,false);
+  assert.equal(f.node('channel-tunnel').hidden,true);
+  assert.equal(f.node('panel-cloud').hidden,false);
+  assert.equal(f.node('channel-cloud-tab').attributes['aria-selected'],'true');
+  assert.equal(f.node('nav-connection').attributes['aria-selected'],'true');
+  assert.equal(f.node('page-title').textContent,'安全通道配置');
+  await f.node('channel-cloud-tab').emit('keydown',{key:'ArrowLeft'});await settled();
+  assert.equal(f.node('channel-tunnel').hidden,false);
+  assert.equal(f.node('panel-cloud').hidden,true);
+  await f.node('nav-tool-access').emit('click');await settled();
+  assert.equal(f.node('panel-tool-access').hidden,false);
+  assert.equal(f.node('panel-connection').hidden,true);
+  assert.equal(f.node('page-title').textContent,'本机工具授权');
+  for(const key of ['Cloudflare MCP 通道配置','初始化 Cloudflare MCP 云端服务并管理多设备连接。']){
+    assert.notEqual(i18n.translate('en',key),key);
+    assert.notEqual(i18n.translate('ja',key),key);
+  }
+});
+
 test('log pages share a labelled group, with nested history icon and accessible keyboard order', async () => {
   const start=html.indexOf('id="nav-log-group"');
   const end=html.indexOf('id="nav-connection"',start);
@@ -738,6 +792,71 @@ test('Mac helper loader failure shows an actionable message in both enable error
  assert.doesNotMatch(f.node('error-message').textContent,/MCP 操作未完成/);
 });
 
+
+test('default auto-allow mode and last grant dropdown selection are loaded from local policy',async()=>{
+  const state=initialState();
+  const tool={name:'start_task',group:'tasks',allowed:true,read_only:false,
+    grant_scope:'session',mode:'scoped'};
+  const policy={tools:[tool],total:1,remote_count:1,preferred_scope:'once',
+    auto_allow:true,auto_scope:'session'};
+  const autoChanges=[],grantChanges=[];
+  const f=await rendererFixture(state,{
+    async cloudRouterToolPermissions(){return {...policy};},
+    async cloudRouterAutoAllow(value){
+      autoChanges.push({...value});
+      policy.auto_allow=value.enabled;
+      policy.auto_scope=value.scope;
+      return {...policy};
+    },
+    async cloudRouterToolGrant(value){
+      grantChanges.push({...value});
+      policy.preferred_scope=value.scope;
+      return {...policy};
+    }
+  });
+  await settled();
+  assert.equal(f.node('cloud-tool-bulk-scope').value,'once');
+  assert.equal(f.node('cloud-tool-auto-allow').checked,true);
+  assert.equal(f.node('cloud-tool-auto-scope').value,'session');
+  f.node('cloud-tool-auto-scope').value='permanent';
+  await f.node('cloud-tool-auto-scope').emit('change');await settled();
+  assert.equal(autoChanges.length,1);
+  assert.deepEqual(autoChanges[0],{enabled:true,scope:'permanent'});
+  assert.equal(f.node('cloud-tool-auto-scope').value,'permanent');
+  f.node('cloud-tool-auto-allow').checked=false;
+  await f.node('cloud-tool-auto-allow').emit('change');await settled();
+  assert.equal(autoChanges[1].enabled,false);
+  f.node('cloud-tool-bulk-scope').value='session';
+  await f.node('cloud-tool-enable-all').emit('click');await settled();
+  assert.equal(grantChanges[0].scope,'session');
+  assert.equal(f.node('cloud-tool-bulk-scope').value,'session','successful allow remembers last mode');
+});
+test('local tool catalog expands automatically after MCP initialization without cloud fetch', async()=>{
+  const state=initialState();
+  state.mcp.toolsVersion=1;state.mcp.tools_ready=false;
+  let names=['get_tool_result_page','get_tool_result_file'],reads=0;
+  const localTool=name=>({name,group:name==='get_harness_status'?'other':'files',
+    allowed:true,read_only:true,mode:'persistent',grant_scope:'permanent'});
+  const f=await rendererFixture(state,{async cloudRouterToolPermissions(){
+    ++reads;
+    return {tools:names.map(localTool),total:names.length,remote_count:names.length};
+  }});
+  await settled();
+  const list=f.node('cloud-tool-access-list');
+  const originalCount=list.children.reduce((sum,group)=>sum+group.children[1].children.length,0);
+  assert.equal(originalCount,2,'startup contains only local paging tools');
+  const first=list.children[0];
+  await first.children[0].children[0].emit('click');
+  assert.equal(first.children[1].hidden,false);
+  names=[...names,'get_harness_status','list_usb_devices'];
+  f.update({...state,mcp:{...state.mcp,toolsVersion:2,tools_ready:true}});
+  await settled();
+  const afterCount=list.children.reduce((sum,group)=>sum+group.children[1].children.length,0);
+  assert.equal(afterCount,4,'local tools populate after toolsVersion event');
+  const fileGroup=list.children.find(group=>group.dataset.group==='files');
+  assert.equal(fileGroup.children[1].hidden,false,'expanded group remains open on refresh');
+  assert.ok(reads>=2,'renderer automatically re-reads local IPC tools');
+});
 
 test('cloud panels appear after secure tunnel and device selector shows name only when closed', async()=>{
   const tunnel=html.indexOf('id="connection-title"'),cloud=html.indexOf('id="cloud-setup-heading"'),

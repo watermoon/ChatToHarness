@@ -339,7 +339,7 @@
     cloudDevicesRefresh.disabled=Boolean(cloud.devicesRefreshing)||!cloud.paired;
     const selfName=String(cloud.device_name||'').slice(0,80);
     const selfId=String(cloud.device_id||'').slice(0,80);
-    cloudCurrentDevice.textContent=t('当前设备')+'：'+(selfName||t('未识别'));
+    cloudCurrentDevice.textContent=t('当前设备')+'：'+(selfName||t('未识别'))+(cloud.test_mode?' ('+t('测试连接')+')':'');
     cloudCurrentDeviceId.textContent=t('设备 ID')+'：'+(selfId||t('未识别'));
     cloudDevicesList.replaceChildren();
     const devices=Array.isArray(cloud.devices)?cloud.devices:[];
@@ -412,7 +412,7 @@
     catch(e){cloudDevicesStatus.textContent=t('设备清单暂时无法更新（显示上次结果）');}
   };
   cloudDevicesRefresh?.addEventListener('click',()=>{void refreshCloudDevices();});
-  if(typeof setInterval==='function')setInterval(()=>{if(!byId('panel-connection').hidden){
+  if(typeof setInterval==='function')setInterval(()=>{if(!byId('panel-connection').hidden&&!byId('panel-cloud').hidden){
     void api.getState().then(state=>state?.cloudRouter?.paired && refreshCloudDevices()).catch(()=>{});
   }},30000);
 
@@ -548,7 +548,12 @@
     const select=byId('cloud-tool-bulk-scope');
     if(!select)return;
     for(const [value,label] of scopeOptions){
-      const option=Array.from(select.options).find(item=>item.value===value);
+      const option=Array.from(select.options||[]).find(item=>item.value===value);
+      if(option)option.textContent=t(label);
+    }
+    const autoSelect=byId('cloud-tool-auto-scope');
+    for(const [value,label] of [['session','当前连接会话'],['permanent','永久允许']]){
+      const option=Array.from(autoSelect?.options||[]).find(item=>item.value===value);
       if(option)option.textContent=t(label);
     }
   };
@@ -560,19 +565,23 @@
   };
   let remoteAccessBusy=false;
   let currentRemoteTools=[];
+  const autoAllowToggle=byId('cloud-tool-auto-allow');
+  const autoAllowScope=byId('cloud-tool-auto-scope');
+  let savedAutoPolicy={enabled:true,scope:'session'};
+  let lastLocalToolsVersion=null;
+  let remoteToolRefreshSerial=0;
+  const expandedRemoteGroups=new Map();
   const makeScopeSelect=(value)=>{
     const sel=document.createElement('select');sel.className='remote-tool-scope';
     for(const [id,label] of scopeOptions){
       const opt=document.createElement('option');opt.value=id;opt.textContent=t(label);sel.append(opt);
     }
-    sel.value=value==='disabled'?'permanent':value;
+    sel.value=value==='disabled'?(byId('cloud-tool-bulk-scope')?.value||'permanent'):value;
     return sel;
   };
   const applyRemoteGrants=async(names,enabled,scope)=>{
     if(remoteAccessBusy||!names.length)return;
-    const highRisk=currentRemoteTools.filter(item=>names.includes(item.name)&&
-      (item.mode!=='persistent'||!item.read_only));
-    if(enabled&&highRisk.length&&!window.confirm(t('授权敏感工具会允许远程请求，但执行时仍保留本机确认和操作限制。是否继续？')))return;
+
     remoteAccessBusy=true;
     toolAccessStatus.textContent=t('正在更新工具权限…');
     try{
@@ -584,11 +593,41 @@
       await refreshRemoteToolAccess();
     }finally{remoteAccessBusy=false;}
   };
+  const applyAutoPolicy=async()=>{
+    if(remoteAccessBusy)return;
+    const requested={enabled:!!autoAllowToggle.checked,scope:autoAllowScope.value};
+    if(requested.enabled===savedAutoPolicy.enabled&&requested.scope===savedAutoPolicy.scope)return;
+    remoteAccessBusy=true;
+    autoAllowToggle.disabled=true;autoAllowScope.disabled=true;
+    try{
+      const result=await api.cloudRouterAutoAllow(requested);
+      savedAutoPolicy={enabled:result.auto_allow,scope:result.auto_scope};
+      await refreshRemoteToolAccess();
+    }catch(error){
+      autoAllowToggle.checked=savedAutoPolicy.enabled;
+      autoAllowScope.value=savedAutoPolicy.scope;
+      if(!String(error?.message||error).includes('REMOTE_AUTO_ALLOW_CANCELLED'))
+        toolAccessStatus.textContent=t('授权设置失败')+'：'+String(error?.message||error).slice(0,120);
+    }finally{
+      remoteAccessBusy=false;autoAllowToggle.disabled=false;autoAllowScope.disabled=false;
+    }
+  };
+  autoAllowToggle?.addEventListener('change',()=>void applyAutoPolicy());
+  autoAllowScope?.addEventListener('change',()=>void applyAutoPolicy());
   const refreshRemoteToolAccess=async()=>{
     if(!toolAccessList)return;
+    const serial=++remoteToolRefreshSerial;
     try{
+      // This IPC queries the local MCP Manager, never the Cloudflare Worker.
       const result=await api.cloudRouterToolPermissions();
+      if(serial!==remoteToolRefreshSerial)return;
       currentRemoteTools=result.tools;
+      const lastScope=result.preferred_scope||'permanent';
+      const bulkScope=byId('cloud-tool-bulk-scope');
+      if(bulkScope)bulkScope.value=lastScope;
+      savedAutoPolicy={enabled:result.auto_allow!==false,scope:result.auto_scope||'session'};
+      if(autoAllowToggle)autoAllowToggle.checked=savedAutoPolicy.enabled;
+      if(autoAllowScope)autoAllowScope.value=savedAutoPolicy.scope;
       toolAccessList.replaceChildren();
       const buckets=new Map();
       for(const item of result.tools){
@@ -597,13 +636,26 @@
         buckets.get(group).push(item);
       }
       for(const [key,items] of buckets){
-        const section=document.createElement('section');section.className='remote-tool-group';
+        const section=document.createElement('section');section.className='remote-tool-group';section.dataset.group=key;
         const header=document.createElement('div');header.className='remote-tool-group-header';
-        const groupName=document.createElement('strong');groupName.textContent=t(toolGroups[key]||toolGroups.other);
+        const groupToggle=document.createElement('button');groupToggle.type='button';
+        groupToggle.className='remote-tool-group-toggle';
+        const isExpanded=expandedRemoteGroups.get(key)===true;
+        groupToggle.setAttribute('aria-expanded',String(isExpanded));
+        groupToggle.setAttribute('aria-controls','cloud-tool-group-'+key);
+        groupToggle.textContent=t(toolGroups[key]||toolGroups.other);
+        const body=document.createElement('div');body.className='remote-tool-group-body';
+        body.id='cloud-tool-group-'+key;body.hidden=!isExpanded;
+        groupToggle.addEventListener('click',()=>{
+          const next=body.hidden;
+          body.hidden=!next;groupToggle.setAttribute('aria-expanded',String(next));
+          expandedRemoteGroups.set(key,next);
+        });
+        const groupName=groupToggle;
         const counts=document.createElement('span');
         counts.className='remote-tool-group-count';
         counts.textContent=items.filter(item=>item.allowed).length+'/'+items.length;
-        const scope=makeScopeSelect(byId('cloud-tool-bulk-scope')?.value||'permanent');
+        const scope=makeScopeSelect(result.preferred_scope||'permanent');
         scope.setAttribute('aria-label',t('分组授权有效期')+' · '+groupName.textContent);
         const allow=document.createElement('button');allow.type='button';allow.className='button secondary';
         allow.textContent=t('授权本组');
@@ -611,7 +663,7 @@
         deny.textContent=t('取消本组');
         allow.addEventListener('click',()=>void applyRemoteGrants(items.map(item=>item.name),true,scope.value));
         deny.addEventListener('click',()=>void applyRemoteGrants(items.map(item=>item.name),false,scope.value));
-        header.append(groupName,counts,scope,allow,deny);section.append(header);
+        header.append(groupName,counts,scope,allow,deny);section.append(header,body);
         for(const item of items){
           const row=document.createElement('div');row.className='remote-tool-access-row';
           const check=document.createElement('input');check.type='checkbox';check.checked=item.allowed;
@@ -619,9 +671,8 @@
           const detail=document.createElement('span');detail.className='remote-tool-access-description';
           const title=document.createElement('strong');title.textContent=item.name;
           const hint=document.createElement('small');
-          hint.textContent=t(item.mode==='session'?'操作会话授权一次':
-            item.mode==='per_call'?'每次执行前本机确认':
-            item.read_only?'只读':'启用后仍须通过本地权限验证');
+          hint.textContent=t(item.read_only?'只读工具；由本机列表控制授权':
+            '由本机列表控制授权；不会弹出额外的远程授权窗口');
           detail.append(title,hint);
           const duration=makeScopeSelect(item.grant_scope);
           duration.setAttribute('aria-label',t('授权有效期')+' · '+item.name);
@@ -629,15 +680,30 @@
           duration.addEventListener('change',()=>{
             if(check.checked)void applyRemoteGrants([item.name],true,duration.value);
           });
-          row.append(check,detail,duration);section.append(row);
+          row.append(check,detail,duration);body.append(row);
         }
         toolAccessList.append(section);
       }
-      toolAccessStatus.textContent=t('当前授权')+'：'+result.remote_count+'/'+result.total;
+      toolAccessStatus.textContent=currentState?.mcp?.tools_ready===false
+        ? t('正在加载本地工具…')+' ('+result.total+')'
+        : t('当前授权')+'：'+result.remote_count+'/'+result.total;
     }catch(error){
+      if(serial!==remoteToolRefreshSerial)return;
       toolAccessStatus.textContent=t('工具读取失败')+'：'+String(error?.message||error).slice(0,120);
     }
   };
+  const setAllRemoteGroupsExpanded=expanded=>{
+    for(const section of toolAccessList.querySelectorAll('.remote-tool-group')){
+      const button=section.querySelector('.remote-tool-group-toggle');
+      const body=section.querySelector('.remote-tool-group-body');
+      if(!button||!body)continue;
+      body.hidden=!expanded;
+      button.setAttribute('aria-expanded',String(expanded));
+      expandedRemoteGroups.set(section.dataset.group,expanded);
+    }
+  };
+  byId('cloud-tool-expand-all')?.addEventListener('click',()=>setAllRemoteGroupsExpanded(true));
+  byId('cloud-tool-collapse-all')?.addEventListener('click',()=>setAllRemoteGroupsExpanded(false));
   byId('cloud-tool-access-refresh')?.addEventListener('click',()=>void refreshRemoteToolAccess());
   byId('cloud-tool-enable-all')?.addEventListener('click',()=>void applyRemoteGrants(
     currentRemoteTools.map(item=>item.name),true,byId('cloud-tool-bulk-scope').value));
@@ -690,11 +756,12 @@
   const mcpApprovalPending = new Set();
   const mcpOpenTools = new Set();
   const cancelled = Symbol('cancelled');
-  const tabNames = ['overview', 'logs', 'history', 'connection', 'directories', 'mcp', 'help'];
+  const tabNames = ['overview', 'logs', 'history', 'connection', 'tool-access', 'directories', 'mcp', 'help'];
   const pages = {
     overview: ['工作空间概览', '将 AI 对话连接到本机执行环境。'],
     logs: ['实时日志', '持续查看本机连接、工具调用与异常日志。'],
-    connection: ['连接配置', '为这个工作空间建立一条安全通道。'],
+    connection: ['安全通道配置', '为这个工作空间建立一条安全通道。'],
+    'tool-access': ['本机工具授权', '在本机统一管理工具访问权限、授权有效期和自动允许设置。'],
     proxy: ['代理设置', '配置安全通道使用的代理。'],
     directories: ['工作目录', '选择协作范围，自动交付工程规范。'],
     mcp: ['插件', '连接工具，管理 AI 可以使用的能力。'],
@@ -795,6 +862,32 @@
     byId('nav-logs').setAttribute('aria-expanded', String(logMenuExpanded));
     if (!logMenuExpanded) byId('nav-history').setAttribute('tabindex', '-1');
   }
+  let connectionChannel='tunnel';
+  function setConnectionChannel(channel,focus=false){
+    if(channel!=='tunnel'&&channel!=='cloud')return;
+    connectionChannel=channel;
+    byId('channel-tunnel').hidden=channel!=='tunnel';
+    byId('panel-cloud').hidden=channel!=='cloud';
+    for(const mode of ['tunnel','cloud']){
+      const control=byId('channel-'+mode+'-tab');
+      const active=mode===channel;
+      control.className='connection-channel-tab'+(active?' selected':'');
+      control.setAttribute('aria-selected',String(active));
+      control.setAttribute('tabindex',active?'0':'-1');
+      if(active&&focus)control.focus();
+    }
+    if(channel==='cloud'&&!byId('panel-connection').hidden)void refreshCloudDevices();
+  }
+  for(const channel of ['tunnel','cloud']){
+    const control=byId('channel-'+channel+'-tab');
+    control.addEventListener('click',()=>setConnectionChannel(channel));
+    control.addEventListener('keydown',event=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();
+      setConnectionChannel(event.key==='Home'?'tunnel':event.key==='End'?'cloud':
+        event.key==='ArrowRight'?'cloud':'tunnel',true);
+    });
+  }
   function showTab(name, focus = false) {
     if (!Object.hasOwn(pages, name)) return;
     if (name === 'history') setLogMenuExpanded(true);
@@ -805,6 +898,7 @@
     // Keep the logs category highlighted for either of its two pages.
     byId('nav-log-group').dataset.active = String(name === 'logs' || name === 'history');
     if(name==='history')void loadHistory();
+    if(name==='tool-access')void refreshRemoteToolAccess();
     if(name==='logs')void loadLiveLogs(true);
     for (const tab of [...tabNames, 'proxy']) byId('panel-' + tab).hidden = tab !== name;
     document.querySelectorAll('[data-tab]').forEach((button) => {
@@ -814,6 +908,7 @@
       button.setAttribute('tabindex', selected ? '0' : '-1');
       if (selected && focus) button.focus();
     });
+    if(name==='connection')setConnectionChannel('tunnel');
     byId('page-title').textContent = t(pages[name][0]);
     byId('page-description').textContent = t(pages[name][1]);
     byId('page-description').hidden=name==='proxy';
@@ -880,6 +975,12 @@
       actionEpoch = state.actionEpoch;
     }
     currentState = state;
+    // Startup may expose only the two result-page tools until MCP services
+    // finish connecting. Local state publishes each toolsVersion change.
+    if(Number.isSafeInteger(state.mcp?.toolsVersion)&&state.mcp.toolsVersion!==lastLocalToolsVersion){
+      lastLocalToolsVersion=state.mcp.toolsVersion;
+      void refreshRemoteToolAccess();
+    }
     updateCloudSetupStatus(state);
     updateCloudPairStatus(state);
     if(state.cloudRouter?.mcp_url && !cloudPairUrl.value)cloudPairUrl.value=state.cloudRouter.mcp_url;

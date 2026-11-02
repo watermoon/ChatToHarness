@@ -42,11 +42,12 @@ test('catalog derives only explicitly read-only, closed-world tools from live ma
   };
   const catalog=createDeviceCatalog(manager);
   assert.deepEqual(catalog.tools.map(tool=>tool.name),[
-    'get_harness_status','get_tool_result_file','get_tool_result_page','list_usb_devices'
+    'computer_use','get_harness_status','get_tool_result_file','get_tool_result_page',
+    'list_usb_devices','missing_hints','open_world_probe','write_file'
   ]);
   assert.match(catalog.version,/^[a-f0-9]{64}$/);
-  assert.ok(catalog.tools.every(tool=>tool.annotations.readOnlyHint===true&&
-    tool.annotations.destructiveHint===false&&tool.annotations.openWorldHint===false));
+  assert.equal(catalog.tools.find(tool=>tool.name==='computer_use').remoteGrant.mode,'session');
+  assert.equal(catalog.tools.find(tool=>tool.name==='open_world_probe').annotations.openWorldHint,true);
 });
 
 test('catalog version is stable across source ordering and changes when a schema changes',()=>{

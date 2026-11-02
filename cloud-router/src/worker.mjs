@@ -101,12 +101,16 @@ async function validateCatalog(value) {
     const hints=item.annotations;
     const schema=item.inputSchema;
     const name=String(item.name).split('__').pop();
+    const scopedTool=['start_process','start_task','interact_with_process','set_config_value'].includes(name);
     const expectedMode=name==='computer_use'?'session':
-      ['kill_process','force_terminate','move_file','undo_project_edit',
-       'start_process','start_task','interact_with_process','set_config_value'].includes(name)?'per_call':'persistent';
+      ['kill_process','force_terminate','move_file','undo_project_edit'].includes(name)?'per_call':
+      scopedTool?'scoped':'persistent';
     const grant=item.remoteGrant;
+    // Older installed agents still publish per_call; support those during
+    // rolling updates, but never accept a weaker mode for delete/terminate.
     if(grant!==undefined && (!grant || typeof grant!=='object'||Array.isArray(grant) ||
-        Object.keys(grant).length!==1 || grant.mode!==expectedMode))return null;
+        Object.keys(grant).length!==1 || (grant.mode!==expectedMode &&
+          !(scopedTool&&grant.mode==='per_call'))))return null;
     if((!grant && (hints?.readOnlyHint!==true || hints?.destructiveHint!==false || hints?.openWorldHint!==false)) ||
         (grant && (!hints || typeof hints.readOnlyHint!=='boolean' ||
           typeof hints.destructiveHint!=='boolean' || typeof hints.openWorldHint!=='boolean')) ||
@@ -116,7 +120,9 @@ async function validateCatalog(value) {
     const tool={name:item.name,description:item.description,inputSchema:schema,
       annotations:{readOnlyHint:hints.readOnlyHint===true,destructiveHint:hints.destructiveHint===true,
         idempotentHint:hints.idempotentHint===true,openWorldHint:hints.openWorldHint===true},
-      ...(grant?{remoteGrant:{mode:expectedMode}}:{})};
+      // Preserve the authenticated sender's original legacy mode when hashing.
+      // Rewriting per_call to scoped changes the signed catalog version.
+      ...(grant?{remoteGrant:{mode:grant.mode}}:{})};
     if (new TextEncoder().encode(JSON.stringify(tool)).length>MAX_TOOL_BYTES) return null;
     names.add(item.name);tools.push(tool);
   }
@@ -149,13 +155,27 @@ const registered = ws => {
   return x?.authenticated && typeof x.device_id === 'string' ? x : null;
 };
 function currentSocket(ctx, deviceId) {
-  return ctx.getWebSockets().find(ws => ws.readyState === 1 && registered(ws)?.device_id === deviceId);
+  return ctx.getWebSockets().find(ws => ws.readyState === 1 && registered(ws)?.device_id === deviceId && registered(ws)?.test_mode!==true);
 }
 export class DeviceHub {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
     this.pending = new Map();
+    this.catalogRefreshAttempts = new Map();
+  }
+  refreshInvalidCatalog(deviceId) {
+    // A Worker upgrade can invalidate a legacy stored snapshot. Never leave an
+    // online device permanently uncallable: request a fresh registration by
+    // closing only that device's socket, with a bounded retry frequency.
+    const ws=currentSocket(this.ctx,deviceId);
+    const now=Date.now();
+    if(!ws||now-(this.catalogRefreshAttempts.get(deviceId)||0)<30000)return;
+    this.catalogRefreshAttempts.set(deviceId,now);
+    console.warn('cloud-router-catalog-reconnect',JSON.stringify({
+      device_id:deviceId,connection_id:registered(ws)?.connection_id||'',
+      reason:'stored_catalog_invalid'}));
+    ws.close(4009,'Refresh invalid catalog');
   }
   async fetch(req) {
     const pathname = new URL(req.url).pathname;
@@ -208,7 +228,10 @@ export class DeviceHub {
     }
     if (pathname === '/agent') {
       if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('WebSocket required', {status: 426});
-      if (this.ctx.getWebSockets().length >= 32) return json(error('DEVICE_LIMIT', 'Too many agent connections'), 429);
+      // Test sockets have their own small quota and must not consume the
+      // production device connection quota after authentication.
+      if (this.ctx.getWebSockets().filter(ws=>ws.readyState===1 && registered(ws)?.test_mode!==true).length >= 32)
+        return json(error('DEVICE_LIMIT', 'Too many production or pending connections'), 429);
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
@@ -225,7 +248,7 @@ export class DeviceHub {
       }
       const entries=await this.ctx.storage.list({prefix:'device:',limit:200});
       const online=new Set(this.ctx.getWebSockets().filter(ws=>ws.readyState===1)
-        .map(registered).filter(Boolean).map(item=>item.device_id));
+        .map(registered).filter(item=>item&&item.test_mode!==true).map(item=>item.device_id));
       const devices=[];
       for (const [key,item] of entries) {
         if (!item || !ID.test(key.slice(7)) ||
@@ -245,7 +268,11 @@ export class DeviceHub {
         return json(error('BAD_REQUEST','Explicit device_id and optional catalog cursor required'),400);
       const stored=await this.ctx.storage.get('catalog:'+input.device_id);
       const catalog=stored===undefined?LEGACY_CATALOG:await validateCatalog(stored);
-      if(!catalog)return json(error('DEVICE_CATALOG_UNAVAILABLE','The device has not published a valid catalog'),503);
+      if(!catalog){
+        this.refreshInvalidCatalog(input.device_id);
+        return json(error('DEVICE_CATALOG_UNAVAILABLE',
+          'Device catalog invalid; reconnecting this device to refresh its tools'),503);
+      }
       const page=pageCatalog(catalog,input.cursor,input.limit);
       if(!page)return json(error('CATALOG_CURSOR_EXPIRED','Catalog cursor or page size is invalid'),409);
       return json({ok:true,device_id:input.device_id,online:Boolean(currentSocket(this.ctx,input.device_id)),...page});
@@ -258,19 +285,23 @@ export class DeviceHub {
         return json(error('BAD_REQUEST', 'Explicit device_id, tool_name and object arguments required'), 400);
       const stored=await this.ctx.storage.get('catalog:'+input.device_id);
       const catalog=stored===undefined?LEGACY_CATALOG:await validateCatalog(stored);
-      if(!catalog)return json(error('DEVICE_CATALOG_UNAVAILABLE','The device has not published a valid catalog'),503);
+      if(!catalog){
+        this.refreshInvalidCatalog(input.device_id);
+        return json(error('DEVICE_CATALOG_UNAVAILABLE',
+          'Device catalog invalid; reconnecting this device to refresh its tools'),503);
+      }
       if(input.catalog_version&&input.catalog_version!==catalog.version)
         return json(error('CATALOG_VERSION_STALE','Refresh list_device_tools before invoking this tool'),409);
       if(!catalog.tools.some(tool=>tool.name===input.tool_name))
         return json(error('TOOL_DENIED','Tool is not present in the selected device catalog'),403);
-      const cap=allowedTools(this.env);
-      if(cap&&!cap.has(input.tool_name))
-        return json(error('TOOL_DENIED','Tool is not permitted by the cloud policy'),403);
+
       const ws = currentSocket(this.ctx, input.device_id);
       if (!ws) return json(error('DEVICE_OFFLINE', 'Selected device is not connected'), 503);
       const grantedTool=catalog.tools.find(tool=>tool.name===input.tool_name);
-      const needsLocalConfirmation=['session','per_call'].includes(grantedTool?.remoteGrant?.mode);
-      const ms = Math.max(1000, Math.min(30000, Number(input.timeout_ms) || (needsLocalConfirmation?30000:15000)));
+      const needsLocalConfirmation=['session','per_call','scoped'].includes(grantedTool?.remoteGrant?.mode);
+      // No second authorization dialog; runtime timeout only protects execution.
+      const ms = Math.max(1000, Math.min(180000, Number(input.timeout_ms) ||
+        (needsLocalConfirmation?30000:input.tool_name==='get_harness_status'?30000:15000)));
       const invokeOnce = catalogVersion => new Promise(resolve => {
         const requestId = crypto.randomUUID();
         const timeout = setTimeout(() => {
@@ -278,7 +309,14 @@ export class DeviceHub {
           resolve(json(error('EXECUTION_UNKNOWN', 'Device response timed out; do not automatically retry'), 504));
         }, ms);
         this.pending.set(requestId, {ws, resolve, timeout, catalog_version:catalogVersion,
-          device_id:input.device_id,tool_name:input.tool_name});
+          device_id:input.device_id,tool_name:input.tool_name,
+          // Only explicitly read-only, closed-world, non-destructive requests
+          // may be safely replayed on a connection takeover.
+          replayable:!grantedTool.remoteGrant&&
+            grantedTool.annotations?.readOnlyHint===true&&
+            grantedTool.annotations?.destructiveHint===false&&
+            grantedTool.annotations?.openWorldHint===false,
+          arguments:input.arguments,expires_at:Date.now()+ms,replayed:false});
         try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name,
           catalog_version:catalogVersion, arguments: input.arguments,expires_at:Date.now()+ms})); }
         catch {
@@ -320,6 +358,7 @@ export class DeviceHub {
     const reg = registered(ws);
     if (!reg) {
       if (item?.type !== 'register' || !ID.test(item.device_id || '') ||
+          (item.test_mode!==undefined&&typeof item.test_mode!=='boolean') ||
           typeof item.name !== 'string' || item.name.length > 80 ||
           !['darwin','win32','linux'].includes(item.platform)) {
         ws.close(1008, 'Invalid registration'); return;
@@ -328,10 +367,50 @@ export class DeviceHub {
       if (!await verifyDevice(this.ctx,item.device_id,item.token)) { ws.close(1008, 'Unauthorized device'); return; }
       const catalog=item.catalog===undefined?LEGACY_CATALOG:await validateCatalog(item.catalog);
       if(!catalog){ws.close(1008,'Invalid tool catalog');return;}
+      // A test agent must be authenticated like any other agent, but it must
+      // not replace a production socket, update the production catalog/roster,
+      // or receive production invocations (even with the same device_id).
+      if(item.test_mode===true){
+        const testCount=this.ctx.getWebSockets().filter(socket=>socket.readyState===1 &&
+          registered(socket)?.test_mode===true).length;
+        if(testCount>=8){ws.close(1013,'Test agent limit reached');return;}
+        const connectionId=crypto.randomUUID();
+        ws.serializeAttachment({authenticated:true,device_id:item.device_id,
+          name:item.name,platform:item.platform,test_mode:true,
+          catalog_version:catalog.version,connection_id:connectionId});
+        console.info('cloud-router-test-agent-registered',JSON.stringify({
+          device_id:item.device_id,connection_id:connectionId}));
+        ws.send(JSON.stringify({type:'registered',device_id:item.device_id,
+          test_mode:true,catalog_version:catalog.version,connection_id:connectionId}));
+        return;
+      }
       const old = currentSocket(this.ctx, item.device_id);
-      if (old && old !== ws) {
-        this.failPending(old, 'DEVICE_DISCONNECTED');
-        old.close(1000, 'Replaced by newer connection');
+      const migrated=[];
+      let failedDuringHandover=0;
+      if(old&&old!==ws){
+        const oldStored=await this.ctx.storage.get('catalog:'+item.device_id);
+        const oldCatalog=oldStored===undefined?LEGACY_CATALOG:await validateCatalog(oldStored);
+        for(const [requestId,pending] of this.pending){
+          if(pending.ws!==old)continue;
+          const previous=oldCatalog?.tools.find(x=>x.name===pending.tool_name);
+          const next=catalog.tools.find(x=>x.name===pending.tool_name);
+          if(pending.replayable&&!pending.replayed&&
+             pending.expires_at>Date.now()+1000&&
+             pending.catalog_version===catalog.version&&
+             previous&&next&&JSON.stringify(previous)===JSON.stringify(next)){
+            pending.ws=ws;pending.replayed=true;migrated.push([requestId,pending]);
+            continue;
+          }
+          clearTimeout(pending.timeout);this.pending.delete(requestId);
+          failedDuringHandover++;
+          pending.resolve(json(error('DEVICE_DISCONNECTED',
+            'Connection replaced; execution state may be unknown; do not retry mutations'),502));
+        }
+        console.warn('cloud-router-connection-replaced',JSON.stringify({
+          device_id:item.device_id,old_connection_id:registered(old)?.connection_id||'unknown',
+          transferred_read_only:migrated.length,non_replayable_failed:failedDuringHandover
+        }));
+        old.close(1000,'Replaced by newer connection');
       }
       if(item.harness_version!==undefined&&
          (typeof item.harness_version!=='string'||!/^[0-9A-Za-z.+-]{1,32}$/.test(item.harness_version))){
@@ -350,16 +429,33 @@ export class DeviceHub {
         ...(item.os_version?{os_version:item.os_version}:{}),
         catalog_version:catalog.version,catalog_count:catalog.tools.length
       });
+      const connectionId=crypto.randomUUID();
       ws.serializeAttachment({authenticated:true,device_id:item.device_id,
-        name:item.name,platform:item.platform,catalog_version:catalog.version});
-      ws.send(JSON.stringify({type:'registered',device_id:item.device_id,catalog_version:catalog.version}));
+        name:item.name,platform:item.platform,catalog_version:catalog.version,
+        connection_id:connectionId});
+      ws.send(JSON.stringify({type:'registered',device_id:item.device_id,catalog_version:catalog.version,
+        connection_id:connectionId}));
+      for(const [requestId,pending] of migrated){
+        try{ws.send(JSON.stringify({type:'invoke',request_id:requestId,
+          tool_name:pending.tool_name,catalog_version:pending.catalog_version,
+          arguments:pending.arguments,expires_at:pending.expires_at}));}
+        catch{
+          clearTimeout(pending.timeout);this.pending.delete(requestId);
+          pending.resolve(json(error('EXECUTION_UNKNOWN','Connection handover failed'),502));
+        }
+      }
       return;
     }
     if(item?.type==='catalog_update'){
-      if(currentSocket(this.ctx,reg.device_id)!==ws)return;
+      if(reg.test_mode!==true&&currentSocket(this.ctx,reg.device_id)!==ws)return;
       const catalog=await validateCatalog(item.catalog);
       if(!catalog){
         ws.send(JSON.stringify({type:'catalog_rejected',code:'CATALOG_INVALID'}));
+        return;
+      }
+      if(reg.test_mode===true){
+        ws.serializeAttachment({...reg,catalog_version:catalog.version});
+        ws.send(JSON.stringify({type:'catalog_ack',catalog_version:catalog.version}));
         return;
       }
       await this.ctx.storage.put('catalog:'+reg.device_id,catalog);
@@ -405,8 +501,19 @@ export class DeviceHub {
       pending.resolve(json(error(code, 'Connection dropped; operation may have executed'), 502));
     }
   }
-  webSocketClose(ws) { this.failPending(ws, 'EXECUTION_UNKNOWN'); }
-  webSocketError(ws) { this.failPending(ws, 'EXECUTION_UNKNOWN'); }
+  webSocketClose(ws,code,reason) {
+    const reg=registered(ws);
+    console.warn('cloud-router-agent-closed',JSON.stringify({
+      device_id:reg?.device_id||'',connection_id:reg?.connection_id||'',
+      code:Number.isInteger(code)?code:0,reason:String(reason||'').slice(0,100)}));
+    this.failPending(ws,'EXECUTION_UNKNOWN');
+  }
+  webSocketError(ws) {
+    const reg=registered(ws);
+    console.warn('cloud-router-agent-error',JSON.stringify({
+      device_id:reg?.device_id||'',connection_id:reg?.connection_id||''}));
+    this.failPending(ws,'EXECUTION_UNKNOWN');
+  }
 }
 const tools = [
   {name:'create_pairing_code',description:'Create one short-lived (5 minutes), one-use secret to pair one personal device in its ChatToHarness desktop app. Treat the code as confidential; never paste it publicly.',
@@ -501,9 +608,7 @@ export const authorizedWorker = {
         !routed.arguments || typeof routed.arguments !== 'object' || Array.isArray(routed.arguments) ||
         name==='call_device_tool'&&!/^[a-f0-9]{64}$/.test(routed.catalog_version||''))
       return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'Explicit device_id/tool_name/catalog_version/arguments required'))}));
-    const cloudCap=allowedTools(env);
-    if (cloudCap && !cloudCap.has(routed.tool_name))
-      return json(rpc(id, {isError: true, ...textResult(error('TOOL_DENIED', 'Tool not permitted by cloud policy'))}));
+
     const upstream = await getHub(env).fetch(new Request('https://hub.internal/invoke', {method: 'POST',
       body: JSON.stringify(routed),
       headers: {'content-type': 'application/json'}}));

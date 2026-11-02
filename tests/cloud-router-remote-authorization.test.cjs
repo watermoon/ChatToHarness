@@ -6,7 +6,7 @@ const {CloudRouterService}=require('../app/cloud-router-service.cjs');
 function fakeTool(name,hints={readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}){
  return {name,description:name,inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:hints};
 }
-test('device rechecks grants before and after remote prompt; revocation denies subsequent calls',async t=>{
+test('remote device lists all tools and uses only local grants for execution',async t=>{
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'cloud-access-integration-'));
  t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
  const calls=[];
@@ -15,23 +15,21 @@ test('device rechecks grants before and after remote prompt; revocation denies s
   call:async(name,args)=>{calls.push([name,args]);return {structuredContent:{ok:true,name}};},
   broker:{results:{tools:()=>[]}}
  };
- let decision=true,prompts=0;
- const access=new RemoteToolAccess({home,approve:async()=>{prompts++;return decision;}});
+ let prompts=0;
+ const access=new RemoteToolAccess({home,approve:async()=>{prompts++;throw Error('NO_DIALOG_ALLOWED')}});
  const service=new CloudRouterService({manager,remoteAccess:access,
   identity:{id:'rocket',name:'Rocket',platform:'win32'}});
- assert.equal(service.catalog().tools.length,0);
+ assert.deepEqual(service.catalog().tools.map(item=>item.name),['get_config','kill_process']);
  access.set(manager,{name:'get_config',enabled:true});
- assert.deepEqual(service.catalog().tools.map(item=>item.name),['get_config']);
  assert.equal((await service.execute('get_config',{})).structuredContent.ok,true);
  access.set(manager,{name:'get_config',enabled:false});
  await assert.rejects(service.execute('get_config',{}),/TOOL_DENIED/);
- access.set(manager,{name:'kill_process',enabled:true});
- decision=false;
- await assert.rejects(service.execute('kill_process',{pid:100}),/REMOTE_USER_DECLINED/);
+ access.set(manager,{name:'kill_process',enabled:false});
+ await assert.rejects(service.execute('kill_process',{pid:100}),/TOOL_DENIED/);
  assert.equal(calls.length,1);
- decision=true;
+ access.set(manager,{name:'kill_process',enabled:true});
  assert.equal((await service.execute('kill_process',{pid:100})).structuredContent.ok,true);
- assert.equal(prompts,2);
+ assert.equal(prompts,0);
  assert.equal(calls.length,2);
  access.clearSessions();
 });

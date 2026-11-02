@@ -17,6 +17,45 @@ function fixture(t,approve=async()=>true){
  const access=new RemoteToolAccess({home,approve,onChange:()=>changeCount++});
  return {home,access,changes:()=>changeCount};
 }
+test('automatic default permits current connection or permanently, explicit denial wins',t=>{
+ const {home,access}=fixture(t);
+ assert.equal(access.autoAllow,true);
+ assert.equal(access.autoScope,'session','new profiles default to connection-scoped automatic allow');
+ assert.equal(access.scope(tools[3]),'session');
+ access.set(manager,{name:'kill_process',enabled:false});
+ const denied=access.list(manager).tools.find(x=>x.name==='kill_process');
+ assert.equal(denied.allowed,false);
+ const off=access.setAutoAllow({enabled:false,scope:'session'});
+ assert.equal(off.auto_allow,false);
+ assert.equal(access.scope(tools[3]),'disabled');
+ assert.equal(access.scope(tools[4]),'disabled');
+ assert.equal(access.setAutoAllow({enabled:true,scope:'permanent'}).auto_scope,'permanent');
+ assert.equal(access.scope(tools[3]),'permanent');
+ assert.equal(access.scope(tools[4]),'disabled','explicit local deny has priority');
+ const saved=JSON.parse(fs.readFileSync(access.file,'utf8'));
+ assert.equal(saved.auto_allow,true);
+ assert.equal(saved.auto_scope,'permanent');
+ const restored=new RemoteToolAccess({home});
+ assert.equal(restored.autoAllow,true);
+ assert.equal(restored.autoScope,'permanent');
+ assert.equal(restored.scope(tools[4]),'disabled');
+ restored.setAutoAllow({enabled:false,scope:'session'});
+ assert.equal(new RemoteToolAccess({home}).enabled(tools[0]),false);
+ assert.throws(()=>restored.setAutoAllow({enabled:true,scope:'once'}),/INVALID_ARGUMENTS/);
+ assert.throws(()=>restored.setAutoAllow({enabled:'true',scope:'permanent'}),/INVALID_ARGUMENTS/);
+});
+test('last manually selected grant scope is persistent and used as UI preference',t=>{
+ const {access,home}=fixture(t);
+ assert.equal(access.list(manager).preferred_scope,'permanent');
+ access.set(manager,{name:'git_status',enabled:true,scope:'once'});
+ assert.equal(access.list(manager).preferred_scope,'once');
+ const restarted=new RemoteToolAccess({home});
+ assert.equal(restarted.list(manager).preferred_scope,'once');
+ restarted.set(manager,{name:'read_file',enabled:false});
+ assert.equal(restarted.list(manager).preferred_scope,'once','denial must not alter chosen allow mode');
+ restarted.set(manager,{name:'read_file',enabled:true,scope:'session'});
+ assert.equal(new RemoteToolAccess({home}).list(manager).preferred_scope,'session');
+});
 test('all/group grants validate and commit atomically with one catalog update',t=>{
  const {access,changes}=fixture(t);
  const names=tools.map(x=>x.name);
@@ -54,7 +93,7 @@ test('one-time grants permit one invocation, reject concurrent reuse and change 
  access.finish(token);
  assert.equal(access.enabled(tools[3]),false);
  const after=createDeviceCatalog(manager,access);
- assert.notEqual(before.version,after.version);
+ assert.equal(before.version,after.version,'local authorization cannot change remote catalog');
  await assert.rejects(access.before(tools[3],{}),/NOT_GRANTED/);
 });
 test('one-time Computer Use is one approved operation session, not one click',async t=>{
@@ -65,27 +104,27 @@ test('one-time Computer Use is one approved operation session, not one click',as
  const token=await access.before(cu,{action:'open_session',session_title:'authorized test'});
  access.after(token,{structuredContent:{session_id:'local-session',expires_at:Date.now()+300000}});
  access.finish(token);
- assert.equal(promptCount,1);
+ assert.equal(promptCount,0);
  await assert.rejects(access.before(cu,{action:'open_session',session_title:'duplicate'}),/ALREADY_USED/);
  const observe=await access.before(cu,{action:'observe',session_id:'local-session'});
  access.after(observe,{ok:true});
- assert.equal(promptCount,1);
+ assert.equal(promptCount,0);
  const close=await access.before(cu,{action:'close_session',session_id:'local-session'});
  access.after(close,{closed:true});
  assert.equal(access.enabled(cu),false);
  await assert.rejects(access.before(cu,{action:'observe',session_id:'local-session'}),/NOT_GRANTED/);
 });
-test('high-impact per-call confirmation stays mandatory under permanent and session grants',async t=>{
- let prompts=0,decision=true;
- const {access}=fixture(t,async()=>{prompts++;return decision;});
+test('destructive tool obeys local grant without repeat dialog',async t=>{
+ let prompts=0;
+ const {access}=fixture(t,async()=>{prompts++;throw Error('NO_DIALOG_ALLOWED')});
  access.set(manager,{name:'kill_process',enabled:true,scope:'permanent'});
  await access.before(tools[4],{pid:1});
  await access.before(tools[4],{pid:2});
- assert.equal(prompts,2);
  access.set(manager,{name:'kill_process',enabled:true,scope:'session'});
- decision=false;
- await assert.rejects(access.before(tools[4],{pid:3}),/USER_DECLINED/);
- assert.equal(prompts,3);
+ await access.before(tools[4],{pid:3});
+ assert.equal(prompts,0);
+ access.clearSessions();
+ await assert.rejects(access.before(tools[4],{pid:4}),/NOT_GRANTED/);
 });
 test('old boolean grant file migrates without enabling a dangerous grant',t=>{
  const {home}=fixture(t);
@@ -105,7 +144,7 @@ test('invalid scopes, duplicate or oversized batches never modify an existing se
   {names:[],enabled:true},
   {names:['write_file','invalid_tool'],enabled:true}
  ])assert.throws(()=>access.set(manager,input));
- assert.equal(access.enabled(tools[3]),false);
+ assert.equal(access.enabled(tools[3]),true);
  assert.equal(access.enabled(tools[0]),true);
 });
 
@@ -126,7 +165,7 @@ test('real CloudRouterService dispatch consumes a one-time grant and denies stal
  assert.equal((await service.execute('write_file',{path:'test'})).structuredContent.ok,true);
  assert.equal(calls,1);
  assert.equal(access.enabled(provider.visibleTools()[0]),false);
- assert.notEqual(service.catalog().version,version);
+ assert.equal(service.catalog().version,version,'cloud catalog does not conceal revoked local tools');
  await assert.rejects(service.execute('write_file',{path:'test'}),/TOOL_DENIED/);
  assert.equal(calls,1);
  service.stop();
