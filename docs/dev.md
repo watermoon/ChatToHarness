@@ -1,3 +1,13 @@
+## 2026-11-02 UnifyHarness 权限批量/分组及授权有效期（Issue #12）
+
+- 基于 PR #7 的设备端逐项授权实现：客户端新增全选授权、全部取消，按项目/Git、文件、搜索、任务、终端进程、Computer Use、硬件、MCP、设置和其他分组，每组可选择授权有效期并整组授权/取消；每个工具也有单独的授权有效期下拉框。
+- 授权有效期与执行确认机制分离：`once`=一次远程调用尝试（Computer Use 是一个完整原生操作会话），`session`=本设备当前 Cloudflare 连接生命周期，断线/重启失效，`permanent`=本地持久授权。不能把云端连接会话冒充 ChatGPT 对话会话。持续保留 Computer Use 每次新操作会话本机确认一次、终止进程/高风险操作每次本机确认、STOP/Esc/用户接管/目录权限。
+- `RemoteToolAccess.set` 同时支持单项与原子批量；先验证全部工具/作用域，再一次持久化且仅发一次目录更新；持久授权从 schema v1 boolean 兼容读取，写入 v2；临时授权不保存，过期后不隐式恢复默认只读许可；once 并发重用被拒绝，旧的 in-flight 调用不能消费新授权或在撤销后恢复原生操作会话。
+- 诊断了上一版 PR macOS 15 CI 失败原因（`scripts/ui-smoke.cjs` 英文 UI 中的动态 `当前授权`、`只读` 尚未在语言切换时更新）；新代码在 `translateDocument` 变更语言后重新构建动态权限列表，复跑 rocket Windows `node scripts/ui-smoke.cjs` 成功。macOS 实际 CI 需在当前提交推送后复验。
+- 本轮新增 `tests/remote-tool-scopes.test.cjs` 覆盖批量原子操作、持久/会话/一次性、并发保护、Computer Use 原生会话、进程高风险每次确认、v1 迁移、服务端真实调度、旧调用竞态；27 项授权及路由专项测试通过；全量 `node --test --test-reporter=tap tests/*.test.cjs` 退出码 0；`node scripts/build-site.cjs` 与 `cd cloud-router && npm run check` 通过。
+- 隔离 Windows 免安装构建 `CTH_DIST_SUBDIR=rocket-remote-permission-groups-20261102; npm run build` 退出码 0，且验证 `dist/rocket-remote-permission-groups-20261102/win-unpacked/ChatToHarness.exe` 存在（245589504 字节）。没有替换 rocket 正运行客户端，没有生产部署或更改 OAuth、配对/Tunnel。
+- 待验收：PR CI（特别是 macOS 15 UI 冒烟测试）、新版 GUI 的分组全选操作交互、当前设备实际调用及一次性消费后的远程目录刷新；生产 Cloudflare Worker 更新依旧单独执行，不能以本地通过代替线上验收。
+
 ## 2026-11-02 UnifyHarness 设备端远程工具逐项授权（Issue #11）
 
 - 用户批准的最终策略：Computer Use **每次操作会话仅本机授权一次**（会话内连续输入不逐步确认），进程终止与破坏性操作 **每次执行本机确认**；保持原生 Computer Use 的目标窗口授权、STOP/Esc、人工接管和本机项目/目录授权，不允许通过云端强行跳过。

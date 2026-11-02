@@ -2,10 +2,24 @@
 const fs=require('node:fs'),path=require('node:path');
 const {isRemoteEligible}=require('./cloud-router-catalog.cjs');
 const NAME=/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
+const SCOPES=new Set(['once','session','permanent']);
 const PER_CALL=new Set(['kill_process','force_terminate','move_file','undo_project_edit',
  'start_process','start_task','interact_with_process','set_config_value']);
 const bare=name=>String(name||'').split('__').pop();
 const mode=name=>bare(name)==='computer_use'?'session':PER_CALL.has(bare(name))?'per_call':'persistent';
+function group(name){
+ const n=bare(name);
+ if(n==='computer_use')return 'desktop';
+ if(/usb|pnp|serial|hardware/.test(n))return 'hardware';
+ if(/^git_|project_context|project_overview|project_edit/.test(n))return 'project';
+ if(/^mcp_/.test(n))return 'mcp';
+ if(/search/.test(n))return 'search';
+ if(/task|execution_summary/.test(n))return 'tasks';
+ if(/process|sessions|terminate/.test(n))return 'process';
+ if(/file|directory|edit_block|result_page|result_file/.test(n))return 'files';
+ if(/config|settings|feedback/.test(n))return 'settings';
+ return 'other';
+}
 const definitions=manager=>{
  const map=new Map();
  for(const tool of [...(manager?.broker?.results?.tools?.()||[]),...(manager?.visibleTools?.()||[])])
@@ -16,75 +30,135 @@ class RemoteToolAccess{
  constructor({home,approve=async()=>false,onChange=()=>{},clock=()=>Date.now()}={}){
   if(!path.isAbsolute(home||''))throw Error('REMOTE_GRANTS_INVALID_HOME');
   this.file=path.join(home,'remote-tool-grants.json');this.approve=approve;this.onChange=onChange;this.clock=clock;
-  this.overrides=new Map();this.sessions=new Map();this.generation=0;
+  this.overrides=new Map();this.temporary=new Map();this.sessions=new Map();
+  this.onceActive=new Map();this.reserved=new Set();this.generation=0;
   try{
    if(fs.statSync(this.file).size>65536)throw Error('REMOTE_GRANTS_TOO_LARGE');
    const saved=JSON.parse(fs.readFileSync(this.file,'utf8'));
-   if(saved?.schema_version!==1||!saved.grants||typeof saved.grants!=='object'||Array.isArray(saved.grants))throw Error('REMOTE_GRANTS_INVALID');
+   if(![1,2].includes(saved?.schema_version)||!saved.grants||
+      typeof saved.grants!=='object'||Array.isArray(saved.grants))throw Error('REMOTE_GRANTS_INVALID');
    for(const [name,allow] of Object.entries(saved.grants)){
     if(!NAME.test(name)||typeof allow!=='boolean')throw Error('REMOTE_GRANTS_INVALID');
     this.overrides.set(name,allow);
    }
   }catch(e){if(e.code!=='ENOENT')this.overrides.clear();}
  }
- enabled(tool){return this.overrides.has(tool.name)?this.overrides.get(tool.name):isRemoteEligible(tool);}
+ scope(tool){
+  if(this.temporary.has(tool.name))return this.temporary.get(tool.name);
+  if(this.overrides.has(tool.name))return this.overrides.get(tool.name)?'permanent':'disabled';
+  return isRemoteEligible(tool)?'permanent':'disabled';
+ }
+ enabled(tool){return this.scope(tool)!=='disabled';}
  list(manager){
   const tools=definitions(manager).map(tool=>({name:tool.name,description:String(tool.description||'').slice(0,240),
-   read_only:tool.annotations?.readOnlyHint===true,default_allowed:isRemoteEligible(tool),
-   allowed:this.enabled(tool),mode:mode(tool.name)}));
+   group:group(tool.name),read_only:tool.annotations?.readOnlyHint===true,
+   default_allowed:isRemoteEligible(tool),allowed:this.enabled(tool),
+   grant_scope:this.scope(tool),mode:mode(tool.name)}));
   return {tools,total:tools.length,remote_count:tools.filter(tool=>tool.allowed).length};
  }
- set(manager,{name,enabled}={}){
-  if(!NAME.test(name||'')||typeof enabled!=='boolean')throw Error('REMOTE_GRANTS_INVALID_ARGUMENTS');
-  const tool=definitions(manager).find(item=>item.name===name);
-  if(!tool)throw Error('REMOTE_GRANTS_UNKNOWN_TOOL');
-  const before=new Map(this.overrides);this.overrides.set(name,enabled);
-  const data=JSON.stringify({schema_version:1,grants:Object.fromEntries(this.overrides)});
-  if(Buffer.byteLength(data)>65536){this.overrides=before;throw Error('REMOTE_GRANTS_TOO_LARGE');}
+ // An all/group change is validated and persisted atomically, never partially applied.
+ set(manager,input={}){
+  const {name,names,enabled,scope='permanent'}=input||{};
+  if(typeof enabled!=='boolean'||!SCOPES.has(scope))throw Error('REMOTE_GRANTS_INVALID_ARGUMENTS');
+  const requested=names===undefined?[name]:names;
+  if(!Array.isArray(requested)||!requested.length||requested.length>128||
+     requested.some(n=>!NAME.test(n||''))||new Set(requested).size!==requested.length)
+    throw Error('REMOTE_GRANTS_INVALID_ARGUMENTS');
+  const known=new Set(definitions(manager).map(tool=>tool.name));
+  if(requested.some(n=>!known.has(n)))throw Error('REMOTE_GRANTS_UNKNOWN_TOOL');
+  const permanent=new Map(this.overrides),temporary=new Map(this.temporary);
+  for(const n of requested){
+   if(!enabled){permanent.set(n,false);temporary.delete(n);}
+   else if(scope==='permanent'){permanent.set(n,true);temporary.delete(n);}
+   else {
+    // After a transient grant expires, even formerly default-safe tools stay denied.
+    permanent.set(n,false);temporary.set(n,scope);
+   }
+  }
+  const data=JSON.stringify({schema_version:2,grants:Object.fromEntries(permanent)});
+  if(Buffer.byteLength(data)>65536)throw Error('REMOTE_GRANTS_TOO_LARGE');
   const tmp=this.file+'.tmp';
-  try{fs.mkdirSync(path.dirname(this.file),{recursive:true});fs.writeFileSync(tmp,data,{encoding:'utf8',mode:0o600});fs.renameSync(tmp,this.file);}
-  catch(e){this.overrides=before;try{fs.unlinkSync(tmp);}catch{}throw e;}
-  if(!enabled){this.generation++;if(bare(name)==='computer_use')this.clearSessions();}
-  this.onChange();return this.list(manager);
+  try{
+   fs.mkdirSync(path.dirname(this.file),{recursive:true});
+   fs.writeFileSync(tmp,data,{encoding:'utf8',mode:0o600});fs.renameSync(tmp,this.file);
+  }catch(e){try{fs.unlinkSync(tmp);}catch{}throw e;}
+  this.overrides=permanent;this.temporary=temporary;this.generation++;
+  for(const n of requested)this.reserved.delete(n);
+  if(requested.includes('computer_use')){this.sessions.clear();this.onceActive.clear();}
+  this.onChange();
+  return this.list(manager);
  }
  mode(name){return mode(name);}
- clearSessions(){this.sessions.clear();this.generation++;}
+ consume(name){
+  if(this.temporary.get(name)!=='once')return;
+  this.temporary.delete(name);this.reserved.delete(name);this.onceActive.delete(name);
+  this.onChange();
+ }
+ clearSessions(){
+  this.sessions.clear();this.onceActive.clear();this.reserved.clear();this.temporary.clear();
+  this.generation++;this.onChange();
+ }
  async before(tool,args,{expiresAt}={}){
   if(!this.enabled(tool))throw Error('REMOTE_TOOL_NOT_GRANTED');
   if(!args||typeof args!=='object'||Array.isArray(args))throw Error('REMOTE_INVALID_ARGUMENTS');
   if(Number.isFinite(expiresAt)&&this.clock()>expiresAt)throw Error('REMOTE_REQUEST_EXPIRED');
-  const kind=mode(tool.name),generation=this.generation;
+  const kind=mode(tool.name),grant=this.scope(tool),generation=this.generation;
   if(kind==='per_call'&&!await this.approve({kind,name:tool.name,args}))
    throw Error('REMOTE_USER_DECLINED');
   if(!this.enabled(tool)||generation!==this.generation)throw Error('REMOTE_GRANT_REVOKED');
+  if(Number.isFinite(expiresAt)&&this.clock()>expiresAt)throw Error('REMOTE_REQUEST_EXPIRED');
   if(bare(tool.name)==='computer_use'){
-   // Listing candidate windows is read-only; it is needed to select a target
-   // before the user approves an operation session.
    if(args.action==='list_windows')return {};
    if(args.action==='open_session'){
-    if(!await this.approve({kind:'session',name:tool.name,args}))throw Error('REMOTE_USER_DECLINED');
+    if(grant==='once'&&(this.reserved.has(tool.name)||this.onceActive.has(tool.name)))
+     throw Error('REMOTE_ONE_TIME_ALREADY_USED');
+    if(!await this.approve({kind:'session',name:tool.name,args}))
+     throw Error('REMOTE_USER_DECLINED');
     if(!this.enabled(tool)||generation!==this.generation)throw Error('REMOTE_GRANT_REVOKED');
     if(Number.isFinite(expiresAt)&&this.clock()>expiresAt)throw Error('REMOTE_REQUEST_EXPIRED');
-    return {open:true};
+    if(grant==='once'){
+     if(this.reserved.has(tool.name)||this.onceActive.has(tool.name))
+      throw Error('REMOTE_ONE_TIME_ALREADY_USED');
+     this.reserved.add(tool.name);
+    }
+    return {open:true,generation,...(grant==='once'?{onceOpen:tool.name}:{})};
    }
    const id=args.session_id;
    if(typeof id!=='string'||!this.sessions.has(id))throw Error('REMOTE_SESSION_NOT_APPROVED');
-   if(this.sessions.get(id)<=this.clock()){this.sessions.delete(id);throw Error('REMOTE_SESSION_EXPIRED');}
-   return {session:id,close:args.action==='close_session'};
+   if(this.sessions.get(id)<=this.clock()){
+    this.sessions.delete(id);
+    if(this.onceActive.get(tool.name)===id)this.consume(tool.name);
+    throw Error('REMOTE_SESSION_EXPIRED');
+   }
+   return {session:id,close:args.action==='close_session',
+    ...(this.onceActive.get(tool.name)===id&&args.action==='close_session'?{onceClose:tool.name}:{})};
   }
-  if(Number.isFinite(expiresAt)&&this.clock()>expiresAt)throw Error('REMOTE_REQUEST_EXPIRED');
+  if(grant==='once'){
+   if(this.reserved.has(tool.name))throw Error('REMOTE_ONE_TIME_ALREADY_USED');
+   this.reserved.add(tool.name);return {onceTool:tool.name,generation};
+  }
   return {};
  }
  after(token,result){
+  if(token?.generation!==undefined&&token.generation!==this.generation)
+   throw Error('REMOTE_GRANT_REVOKED');
   if(token?.open){
    const value=result?.structuredContent||result?.result?.structuredContent||result?.result||result;
    const id=value?.session_id||value?.sessionId;
    if(typeof id!=='string'||!id)throw Error('REMOTE_SESSION_ID_MISSING');
    const raw=value?.expires_at,until=typeof raw==='number'?raw:Date.parse(raw);
    this.sessions.set(id,Math.min(Number.isFinite(until)?until:this.clock()+600000,this.clock()+600000));
+   if(token.onceOpen){this.onceActive.set(token.onceOpen,id);token.onceRecorded=true;
+    this.reserved.delete(token.onceOpen);}
   }
   if(token?.close)this.sessions.delete(token.session);
+  if(token?.onceClose)this.consume(token.onceClose);
   return result;
  }
+ finish(token){
+  if(token?.generation!==this.generation)return;
+  if(token?.onceTool)this.consume(token.onceTool);
+  if(token?.onceOpen&&!token.onceRecorded)this.consume(token.onceOpen);
+ }
 }
-module.exports={RemoteToolAccess,definitions,mode};
+module.exports={RemoteToolAccess,definitions,mode,group};

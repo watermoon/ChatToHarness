@@ -114,6 +114,13 @@
           <section class="card connection-card" aria-labelledby="cloud-tool-access-title">
             <div class="card-header"><div><h2 id="cloud-tool-access-title">远程工具权限 · 当前设备</h2><p>仅在本机勾选允许 UnifyHarness 远程使用的工具。默认只读；本机其他权限仍然生效。</p></div><button id="cloud-tool-access-refresh" class="button secondary" type="button">刷新工具</button></div>
             <p id="cloud-tool-access-status" class="field-hint" role="status" aria-live="polite">正在读取本机工具权限…</p>
+            <div class="remote-tool-bulk">
+              <label for="cloud-tool-bulk-scope">批量授权有效期</label>
+              <select id="cloud-tool-bulk-scope"><option value="once">一次性</option><option value="session">当前连接会话</option><option value="permanent" selected>永久授权</option></select>
+              <button id="cloud-tool-enable-all" class="button secondary" type="button">全选授权</button>
+              <button id="cloud-tool-disable-all" class="button secondary" type="button">全部取消</button>
+            </div>
+            <p class="field-hint">当前会话指本设备与云端的本次连接，断开或重启后失效；一次性授权只允许一次调用。终止进程仍需每次本机确认，Computer Use 每个操作会话仍需确认一次。</p>
             <div id="cloud-tool-access-list" class="remote-tool-access-list" role="group" aria-label="远程工具权限"></div>
             <p class="field-hint">Computer Use：新操作会话须本机确认一次，会话内不重复询问；终止进程、移动或撤销：每次执行都需本机确认。取消勾选立即撤销授权。STOP/Esc 与用户接管始终有效。</p>
           </section>

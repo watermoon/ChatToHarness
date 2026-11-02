@@ -543,37 +543,97 @@
   });
   const toolAccessList=byId('cloud-tool-access-list');
   const toolAccessStatus=byId('cloud-tool-access-status');
+  const scopeOptions=[['once','一次性'],['session','当前连接会话'],['permanent','永久授权']];
+  const toolGroups={
+    project:'项目与 Git',files:'文件操作',search:'文件搜索',tasks:'任务管理',
+    process:'进程与终端',desktop:'桌面控制',hardware:'硬件设备',
+    mcp:'MCP 资源',settings:'配置与设置',other:'其他工具'
+  };
+  let remoteAccessBusy=false;
+  let currentRemoteTools=[];
+  const makeScopeSelect=(value)=>{
+    const sel=document.createElement('select');sel.className='remote-tool-scope';
+    for(const [id,label] of scopeOptions){
+      const opt=document.createElement('option');opt.value=id;opt.textContent=t(label);sel.append(opt);
+    }
+    sel.value=value==='disabled'?'permanent':value;
+    return sel;
+  };
+  const applyRemoteGrants=async(names,enabled,scope)=>{
+    if(remoteAccessBusy||!names.length)return;
+    const highRisk=currentRemoteTools.filter(item=>names.includes(item.name)&&
+      (item.mode!=='persistent'||!item.read_only));
+    if(enabled&&highRisk.length&&!window.confirm(t('授权敏感工具会允许远程请求，但执行时仍保留本机确认和操作限制。是否继续？')))return;
+    remoteAccessBusy=true;
+    toolAccessStatus.textContent=t('正在更新工具权限…');
+    try{
+      const updated=await api.cloudRouterToolGrant({names,enabled,scope});
+      await refreshRemoteToolAccess();
+      toolAccessStatus.textContent=t('当前授权')+'：'+updated.remote_count+'/'+updated.total;
+    }catch(error){
+      toolAccessStatus.textContent=t('授权设置失败')+'：'+String(error?.message||error).slice(0,120);
+      await refreshRemoteToolAccess();
+    }finally{remoteAccessBusy=false;}
+  };
   const refreshRemoteToolAccess=async()=>{
     if(!toolAccessList)return;
     try{
       const result=await api.cloudRouterToolPermissions();
+      currentRemoteTools=result.tools;
       toolAccessList.replaceChildren();
+      const buckets=new Map();
       for(const item of result.tools){
-        const row=document.createElement('label');row.className='remote-tool-access-row';
-        const check=document.createElement('input');check.type='checkbox';check.checked=item.allowed;
-        const detail=document.createElement('span');detail.className='remote-tool-access-description';
-        const title=document.createElement('strong');title.textContent=item.name;
-        const hint=document.createElement('small');
-        hint.textContent=t(item.mode==='session'?'操作会话授权一次':
-          item.mode==='per_call'?'每次执行前本机确认':
-          item.read_only?'只读':'启用后仍须通过本地权限验证');
-        detail.append(title,hint);
-        check.addEventListener('change',async()=>{
-          check.disabled=true;
-          try{
-            const updated=await api.cloudRouterToolGrant({name:item.name,enabled:check.checked});
-            toolAccessStatus.textContent=t('当前授权')+'：'+updated.remote_count+'/'+updated.total;
-          }catch(error){
-            check.checked=!check.checked;
-            toolAccessStatus.textContent=t('授权设置失败')+'：'+String(error?.message||error).slice(0,120);
-          }finally{check.disabled=false;}
-        });
-        row.append(check,detail);toolAccessList.append(row);
+        const group=item.group||'other';
+        if(!buckets.has(group))buckets.set(group,[]);
+        buckets.get(group).push(item);
+      }
+      for(const [key,items] of buckets){
+        const section=document.createElement('section');section.className='remote-tool-group';
+        const header=document.createElement('div');header.className='remote-tool-group-header';
+        const groupName=document.createElement('strong');groupName.textContent=t(toolGroups[key]||toolGroups.other);
+        const counts=document.createElement('span');
+        counts.className='remote-tool-group-count';
+        counts.textContent=items.filter(item=>item.allowed).length+'/'+items.length;
+        const scope=makeScopeSelect(byId('cloud-tool-bulk-scope')?.value||'permanent');
+        scope.setAttribute('aria-label',t('分组授权有效期')+' · '+groupName.textContent);
+        const allow=document.createElement('button');allow.type='button';allow.className='button secondary';
+        allow.textContent=t('授权本组');
+        const deny=document.createElement('button');deny.type='button';deny.className='button secondary';
+        deny.textContent=t('取消本组');
+        allow.addEventListener('click',()=>void applyRemoteGrants(items.map(item=>item.name),true,scope.value));
+        deny.addEventListener('click',()=>void applyRemoteGrants(items.map(item=>item.name),false,scope.value));
+        header.append(groupName,counts,scope,allow,deny);section.append(header);
+        for(const item of items){
+          const row=document.createElement('div');row.className='remote-tool-access-row';
+          const check=document.createElement('input');check.type='checkbox';check.checked=item.allowed;
+          check.setAttribute('aria-label',item.name);
+          const detail=document.createElement('span');detail.className='remote-tool-access-description';
+          const title=document.createElement('strong');title.textContent=item.name;
+          const hint=document.createElement('small');
+          hint.textContent=t(item.mode==='session'?'操作会话授权一次':
+            item.mode==='per_call'?'每次执行前本机确认':
+            item.read_only?'只读':'启用后仍须通过本地权限验证');
+          detail.append(title,hint);
+          const duration=makeScopeSelect(item.grant_scope);
+          duration.setAttribute('aria-label',t('授权有效期')+' · '+item.name);
+          check.addEventListener('change',()=>void applyRemoteGrants([item.name],check.checked,duration.value));
+          duration.addEventListener('change',()=>{
+            if(check.checked)void applyRemoteGrants([item.name],true,duration.value);
+          });
+          row.append(check,detail,duration);section.append(row);
+        }
+        toolAccessList.append(section);
       }
       toolAccessStatus.textContent=t('当前授权')+'：'+result.remote_count+'/'+result.total;
-    }catch(error){toolAccessStatus.textContent=t('工具读取失败')+'：'+String(error?.message||error).slice(0,120);}
+    }catch(error){
+      toolAccessStatus.textContent=t('工具读取失败')+'：'+String(error?.message||error).slice(0,120);
+    }
   };
   byId('cloud-tool-access-refresh')?.addEventListener('click',()=>void refreshRemoteToolAccess());
+  byId('cloud-tool-enable-all')?.addEventListener('click',()=>void applyRemoteGrants(
+    currentRemoteTools.map(item=>item.name),true,byId('cloud-tool-bulk-scope').value));
+  byId('cloud-tool-disable-all')?.addEventListener('click',()=>void applyRemoteGrants(
+    currentRemoteTools.map(item=>item.name),false,byId('cloud-tool-bulk-scope').value));
   void refreshRemoteToolAccess();
   api.getState().then(s=>{updateCloudPairStatus(s);if(s?.cloudRouter?.paired)void refreshCloudDevices();}).catch(()=>{});
   void discoverCloud({});
@@ -819,6 +879,8 @@
       translateDocument(locale);
       showTab(activeTab);
       renderDirectories();
+      // Rebuild dynamic tool rows in the new locale (they are not in static HTML).
+      void refreshRemoteToolAccess();
     }
     byId('language-select').value = locale;
     const settings = state.settings || {};

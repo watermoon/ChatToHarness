@@ -232,6 +232,11 @@ class CloudRouterService {
     const catalog = this.catalog();
     if (!catalog.tools.some(item => item.name === name))
       throw new Error('CLOUD_ROUTER_TOOL_DENIED');
+    const tool=definitions(this.manager).find(item=>item.name===name);
+    if(!tool || (this.remoteAccess && !this.remoteAccess.enabled(tool)))
+      throw Error('CLOUD_ROUTER_TOOL_DENIED');
+    const gate=this.remoteAccess ? await this.remoteAccess.before(tool,args,context) : {};
+    const invoke=async()=>{
     const broker=this.manager.broker;
     if(name==='get_harness_status'){
       if(Object.keys(args).length)throw new Error('CLOUD_ROUTER_INVALID_ARGUMENTS');
@@ -262,14 +267,16 @@ class CloudRouterService {
     }
     // Local grants are evaluated afresh, including after any dialog, and do not
     // bypass McpManager's existing project, service or window authorization.
-    const tool=definitions(this.manager).find(item=>item.name===name);
-    if(!tool || (this.remoteAccess && !this.remoteAccess.enabled(tool)))
-      throw Error('CLOUD_ROUTER_TOOL_DENIED');
-    const gate=this.remoteAccess ? await this.remoteAccess.before(tool,args,context) : {};
     if(!this.catalog().tools.some(item=>item.name===name))
       throw Error('CLOUD_ROUTER_TOOL_DENIED');
-    const result=await this.manager.call(name,args);
-    return this.remoteAccess ? this.remoteAccess.after(gate,result) : result;
+    return this.manager.call(name,args);
+    };
+    try {
+      const result=await invoke();
+      return this.remoteAccess ? this.remoteAccess.after(gate,result) : result;
+    } finally {
+      this.remoteAccess?.finish(gate);
+    }
   }
   status() {
     return {paused:this.paused,enabled: this.phase !== 'disabled', phase: this.agent?.connected ? 'ready' : this.phase,
