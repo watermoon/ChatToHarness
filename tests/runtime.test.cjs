@@ -107,6 +107,19 @@ test('missing bundled executables keep a permanent component code alongside the 
   assert.throws(()=>manager.prepare({directories:[f.notes]}),{code:'MCP_FILE_NOT_FOUND',message:ERRORS.binary});
 });
 
+test('independent local MCP tools remain alive when Secure Tunnel disconnects',async t=>{
+  const f=fixture(t),gateway={stops:0,closes:0,
+    async stop(){this.stops++;},async close(){this.closes++;},
+    status(){return {tools_health:'ready'};}};
+  const manager=new RuntimeManager({home:f.home,gateway,independentLocalTools:true,
+    paths:{node:process.execPath,tunnel:process.execPath}});
+  await manager.disconnect();
+  assert.equal(gateway.stops,0,'Tunnel disconnection cannot stop the local cloud tool service');
+  assert.equal(manager.status().tools_health,'ready');
+  await manager.close();
+  assert.equal(gateway.stops,0);
+  assert.equal(gateway.closes,1,'app shutdown still cleans up local MCP tools');
+});
 test('app gateway supports MCP-only workspaces and Tunnel restarts reuse downstream ownership', {timeout:15000}, async t => {
   const f=fixture(t),report=path.join(f.root,'gateway-tunnel.json');
   const tunnel=writeScript(path.join(f.root,'gateway-tunnel.cjs'),`

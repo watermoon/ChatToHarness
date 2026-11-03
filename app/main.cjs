@@ -135,11 +135,17 @@ async function installUpdate(){
     // Stop queued connection actions and all managed tools before the installer
     // opens. A failed handoff leaves a usable, stopped runtime for manual retry.
     ++actionEpoch;publish();await runtime?.disconnect();
+    // Tool lifecycle is independent of the Tunnel, so installer handoff
+    // must explicitly stop it. This is the only non-exit full shutdown.
+    await mcpManager?.stop();
     if(quitting)return state();
     const error=await shell.openPath(file);if(error)throw new Error();
     app.quit();
   }catch{
     if(!quitting&&updater.status().phase==='installing')updater.installFailed();
+    if(!quitting&&mcpManager&&!mcpManager.running)
+      void mcpManager.start(settings.public()).catch(error=>
+        log('local-tools-restart-failed',{code:error?.code||'MCP_LOCAL_START_FAILED'}));
   }finally{installing=false;publish();}
   return state();
 }
@@ -174,7 +180,23 @@ function registerIPC(){
   });
   bind('update-install',installUpdate);
   bind('update-release',async()=>{const url=updater?.status().releaseUrl;if(url)await shell.openExternal(url);});
-  bind('save-settings',input=>action(async()=>{const before=JSON.stringify(settings.public());const proxyBefore=JSON.stringify(settings.public().proxy);settings.save(input);if(proxyBefore!==JSON.stringify(settings.public().proxy)||input?.proxyPassword?.length||input?.clearProxyPassword===true)cloudRouter?.startStored();if(before!==JSON.stringify(settings.public())||input?.apiKey?.trim()||input?.proxyPassword?.length||input?.clearProxyPassword===true)await runtime.disconnect();}));
+  bind('save-settings',input=>action(async()=>{
+    const previous=settings.public();
+    settings.save(input);
+    const next=settings.public();
+    const proxyChanged=JSON.stringify(previous.proxy)!==JSON.stringify(next.proxy)||
+      Boolean(input?.proxyPassword?.length||input?.clearProxyPassword===true);
+    if(proxyChanged)cloudRouter?.startStored();
+    if(JSON.stringify(previous)!==JSON.stringify(next)||input?.apiKey?.trim()||proxyChanged)
+      await runtime.disconnect();
+    // The Cloudflare connection stays independent, but a change in authorized
+    // directories or project-context policy must refresh the local MCP tools.
+    if(mcpManager&&(JSON.stringify(previous.directories)!==JSON.stringify(next.directories)||
+      previous.autoProjectContext!==next.autoProjectContext)){
+      await mcpManager.stop();
+      await mcpManager.start(next);
+    }
+  }));
   bind('connect',connect);
   bind('proxy-defaults',()=>require('./proxy-config.cjs').defaultBypass());
   let proxyTestBusy=false;
@@ -409,6 +431,9 @@ else{
         }});
       mcpManager.history=history;
       mcpManager.broker=new McpGateway(mcpManager);runtime.gateway=mcpManager;
+      // Local MCP tools must remain available to Cloudflare regardless of the
+      // Secure MCP Tunnel's lifecycle (including explicit disconnect).
+      runtime.independentLocalTools=true;
       const {RemoteToolAccess}=require('./remote-tool-access.cjs');
       remoteToolAccess=new RemoteToolAccess({home,manager:mcpManager,
         onChange:()=>cloudRouter?.catalogChanged()});
@@ -434,6 +459,12 @@ else{
       cloudBootstrap=new CloudBootstrap({home,safeStorage,nodePath:runtime.paths.node,openExternal:url=>shell.openExternal(url),
         sourceDir:path.join(app.isPackaged?resources:path.join(__dirname,'..'),'cloud-router'),onChange:publish,
         fetcher:harnessNetwork.fetcher,cliEnv:harnessNetwork.cliEnv});
+      // Start the local MCP manager even when no Secure Tunnel is configured.
+      // Tunnel connect may call start again; McpManager coalesces connections.
+      void mcpManager.start(settings.public()).catch(error=>{
+        log('local-tools-start-failed',{code:error?.code||'MCP_LOCAL_START_FAILED'});
+        publish();
+      });
       if(!testMode)cloudRouter.startStored();
 
       mcpManager.on('state',()=>{const toolsCount=(mcpManager.broker?.results?.tools()?.length||0)+mcpManager.visibleTools().length;runtime.update({toolsCount,localReady:toolsCount>0});publish();});

@@ -6,7 +6,8 @@ const VALID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 function connectAgent({
   url, deviceId, name, platform, harnessVersion, osVersion, token, execute, testMode = false,
   catalogProvider, allowedTools, WebSocketImpl = globalThis.WebSocket,
-  socketFactory, reconnectMs = 2000, onStatusChange = () => {},
+  socketFactory, reconnectMs = 2000, heartbeatMs = 20000, heartbeatTimeoutMs = 55000,
+  registerTimeoutMs = 20000, onStatusChange = () => {},
   onCatalogMismatch = () => {}, onCatalogError = () => {}, onConnectionEvent = () => {}
 }) {
   if (!/^wss:\/\//.test(url) || !VALID.test(deviceId || '') || typeof token !== 'string' ||
@@ -14,7 +15,8 @@ function connectAgent({
     throw new Error('INVALID_AGENT_CONFIGURATION');
 
   const legacyAllow = new Set(allowedTools || []);
-  let ws, timer, closed = false, authenticated = false, attempt = 0, generation = 0;
+  let ws, timer, deadlineTimer, heartbeatTimer, closed = false, authenticated = false, attempt = 0, generation = 0;
+  let pendingHeartbeat = null, heartbeatSequence=0;
   let lastSentCatalogVersion = '', lastCatalogError = '';
   function catalogFailure(code) {
     if (lastCatalogError === code) return;
@@ -65,41 +67,77 @@ function connectAgent({
     return legacyAllow.has(name);
   }
 
+  function clearWatchdogs() {
+    clearTimeout(deadlineTimer);deadlineTimer=undefined;
+    clearInterval(heartbeatTimer);heartbeatTimer=undefined;
+    pendingHeartbeat=null;
+  }
+  function schedule(socket, reason) {
+    if(closed || timer || (socket && socket!==ws))return;
+    clearWatchdogs();
+    authenticated=false;
+    onStatusChange('reconnecting');
+    const delay=Math.min(30000,reconnectMs*(2**Math.min(4,attempt++)));
+    onConnectionEvent({event:'retry',reason,delay_ms:delay,attempt});
+    timer=setTimeout(()=>{timer=undefined;open();},delay);
+    timer.unref?.();
+    if(ws===socket)ws=undefined; // Fence delayed events from this broken socket.
+    try{socket?.close();}catch{}
+  }
   function open() {
     if (closed) return;
     authenticated = false;
     lastSentCatalogVersion = '';
     const current = ++generation;
+    clearWatchdogs();
+    deadlineTimer=setTimeout(()=>{
+      if(closed||current!==generation)return;
+      // A stalled DNS/proxy/TLS handshake is not guaranteed to emit close.
+      onConnectionEvent({event:'timeout',reason:authenticated?'heartbeat':'registration'});
+      schedule(ws,'handshake_timeout');
+    },registerTimeoutMs);
+    deadlineTimer.unref?.();
     if (socketFactory) {
       Promise.resolve().then(() => socketFactory(url)).then(socket => {
         if (closed || current !== generation) { socket.close(); return; }
         attach(socket);
       }).catch(() => {
         if (closed || current !== generation) return;
-        onStatusChange('reconnecting');
-        timer = setTimeout(() => { timer = undefined; open(); },
-          Math.min(30000, reconnectMs * (2 ** Math.min(4, attempt++))));
+        schedule(ws,'socket_factory_failed');
       });
-    } else attach(new WebSocketImpl(url));
+    } else {
+      try{attach(new WebSocketImpl(url));}
+      catch{schedule(ws,'socket_create_failed');}
+    }
   }
 
   function attach(socket) {
     ws = socket;
+    let fullRegistrationSent=false;
+    const registration = (full=false)=>{
+      const catalog=catalogPayload();
+      return {type:'register',device_id:deviceId,name,platform,
+        harness_version:harnessVersion,os_version:osVersion,token,
+        ...(testMode?{test_mode:true}:{}),
+        ...(catalog?(full?{catalog}:{catalog_version:catalog.version}):{})};
+    };
     socket.addEventListener('open', () => {
       if (closed || socket !== ws) return;
-      const catalog = catalogPayload();
-      socket.send(JSON.stringify({
-        type: 'register', device_id: deviceId, name, platform,
-        harness_version: harnessVersion, os_version: osVersion, token,
-        ...(testMode ? {test_mode: true} : {}),
-        ...(catalog ? {catalog} : {})
-      }));
-      if (catalog) lastSentCatalogVersion = catalog.version;
+      socket.send(JSON.stringify(registration()));
     });
     socket.addEventListener('message', async event => {
       if (socket !== ws || closed || typeof event.data !== 'string') return;
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
+      if(message.type==='catalog_required'&&!authenticated){
+        if(fullRegistrationSent)return;
+        const full=registration(true);
+        if(!full.catalog){socket.close(1008,'Local catalog unavailable');return;}
+        fullRegistrationSent=true;
+        socket.send(JSON.stringify(full));
+        lastSentCatalogVersion=full.catalog.version;
+        return;
+      }
       if (message.type === 'registered' && message.device_id === deviceId) {
         if (Boolean(message.test_mode) !== Boolean(testMode)) {
           socket.close(1008, 'Agent registration mode mismatch');
@@ -108,12 +146,35 @@ function connectAgent({
         onConnectionEvent({event:'registered',test_mode:!!testMode,connection_id:message.connection_id||''});
         authenticated = true;
         attempt = 0;
+        clearWatchdogs();
+        heartbeatTimer=setInterval(()=>{
+          if(closed||socket!==ws||!authenticated)return;
+          const now=Date.now();
+          if(pendingHeartbeat&&now-pendingHeartbeat.at>=heartbeatTimeoutMs){
+            onConnectionEvent({event:'timeout',reason:'heartbeat_ack_missing'});
+            schedule(socket,'heartbeat_timeout');
+            return;
+          }
+          if(pendingHeartbeat)return;
+          const nonce=String(++heartbeatSequence);
+          try{
+            socket.send(JSON.stringify({type:'heartbeat',nonce}));
+            pendingHeartbeat={nonce,at:now};
+          }catch{schedule(socket,'heartbeat_send_failed');}
+        },heartbeatMs);
+        heartbeatTimer.unref?.();
         const catalog = currentCatalog();
+        if(catalog&&message.catalog_version===catalog.version)
+          lastSentCatalogVersion=catalog.version;
         if (catalog && message.catalog_version !== catalog.version) {
           lastSentCatalogVersion = '';
           sendCatalog(socket);
         }
         onStatusChange('ready');
+        return;
+      }
+      if(message.type==='heartbeat_ack'){
+        if(pendingHeartbeat&&message.nonce===pendingHeartbeat.nonce)pendingHeartbeat=null;
         return;
       }
       if (message.type === 'catalog_ack' || message.type === 'catalog_rejected') return;
@@ -141,7 +202,8 @@ function connectAgent({
           if (!args || typeof args !== 'object' || Array.isArray(args))
             throw new Error('INVALID_ARGUMENTS');
           reply = {type: 'result', request_id: message.request_id,
-            result: await execute(toolName, args, {expiresAt:message.expires_at})};
+            result: await execute(toolName, args, {expiresAt:message.expires_at,
+              operationId:message.operation_id})};
         }
       } catch (err) {
         reply = {type: 'result', request_id: message.request_id,
@@ -150,21 +212,14 @@ function connectAgent({
       if (socket === ws && authenticated && socket.readyState === 1)
         socket.send(JSON.stringify(reply));
     });
-    const schedule = () => {
-      if (socket !== ws || closed || timer) return;
-      authenticated = false;
-      onStatusChange('reconnecting');
-      const delay = Math.min(30000, reconnectMs * (2 ** Math.min(4, attempt++)));
-      timer = setTimeout(() => { timer = undefined; open(); }, delay);
-    };
     socket.addEventListener('close', event=>{
       onConnectionEvent({event:'close',code:Number.isSafeInteger(event?.code)?event.code:0,
         reason:String(event?.reason||'').slice(0,100)});
-      schedule();
+      schedule(socket,'websocket_closed');
     });
     socket.addEventListener('error', ()=>{
       onConnectionEvent({event:'error'});
-      schedule();
+      schedule(socket,'websocket_error');
     });
   }
 
@@ -174,6 +229,7 @@ function connectAgent({
       closed = true;
       clearTimeout(timer);
       timer = undefined;
+      clearWatchdogs();
       ws?.close();
       onStatusChange('disabled');
     },

@@ -55,11 +55,11 @@ function healthRequest(base, suffix) {
 }
 
 class RuntimeManager extends EventEmitter {
-  constructor({home, resources, launcherSource=path.join(__dirname,'mcp-launch.cjs'), paths, probe, tunnelScript, gateway, resolveSystemProxy=async()=>null, log=()=>{}}) {
+  constructor({home, resources, launcherSource=path.join(__dirname,'mcp-launch.cjs'), paths, probe, tunnelScript, gateway, independentLocalTools=false, resolveSystemProxy=async()=>null, log=()=>{}}) {
     // Resolve only when explicitly enabled; never expose proxy details in public state.
     super();this.home=home;this.log=log;this.launcherSource=launcherSource;this.resolveSystemProxy=resolveSystemProxy;
     this.paths=paths||bundledPaths(resources);this.tunnelScript=tunnelScript;
-    this.gateway=gateway;this.gatewayLauncher=path.join(home,'mcp-gateway-stdio.cjs');
+    this.gateway=gateway;this.independentLocalTools=independentLocalTools===true;this.gatewayLauncher=path.join(home,'mcp-gateway-stdio.cjs');
     this.localHome=path.join(home,'desktop-commander');this.launcher=path.join(home,'mcp-launch.cjs');
     this.healthFile=path.join(home,'tunnel-health-url');this.launchId=0;this.probeOverride=probe;
     this.value={state:'unconfigured',error:'',localReady:false,toolsCount:0};
@@ -242,7 +242,7 @@ class RuntimeManager extends EventEmitter {
   }
   clearRetry(){clearTimeout(this.retryTimer);this.retryTimer=null;}
   async stopProcess(){const child=this.process,file=this.healthFile;this.process=null;try{fs.unlinkSync(file);}catch{}await stopTree(child);try{fs.unlinkSync(file);}catch{}}
-  async disconnect(){const generation=++this.generation;const bridge=this.proxyBridge;this.proxyBridge=null;this.desired=null;this.clearRetry();this.readySince=null;this.cancelProbe?.();await this.stopProcess();await bridge?.close();if(this.probeChild)await stopTree(this.probeChild);await this.gateway?.stop();if(generation===this.generation)this.update({state:'stopped',error:''});return this.status();}
+  async disconnect(){const generation=++this.generation;const bridge=this.proxyBridge;this.proxyBridge=null;this.desired=null;this.clearRetry();this.readySince=null;this.cancelProbe?.();await this.stopProcess();await bridge?.close();if(this.probeChild)await stopTree(this.probeChild);if(!this.independentLocalTools)await this.gateway?.stop();if(generation===this.generation)this.update({state:'stopped',error:''});return this.status();}
   async close(){this.closed=true;clearInterval(this.timer);await this.disconnect();await this.gateway?.close();}
 }
 module.exports={RuntimeManager,ERRORS,reason,cleanEnvironment,shellQuote,stopTree,healthRequest,reconnectDelay};

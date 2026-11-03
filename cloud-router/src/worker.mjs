@@ -5,6 +5,9 @@ const MAX_BODY = 128 * 1024;
 const MAX_FRAME = 512 * 1024;
 const PROTOCOL_VERSION = '2025-06-18';
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
+const OP_ID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+const OP_RETENTION_MS=24*60*60*1000;
+const MAX_DEVICE_OPERATIONS=256;
 const json = (value, status = 200) => new Response(JSON.stringify(value), {
   status, headers: {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store'}
 });
@@ -162,7 +165,66 @@ export class DeviceHub {
     this.ctx = ctx;
     this.env = env;
     this.pending = new Map();
+    this.onlineWaiters = new Map();
     this.catalogRefreshAttempts = new Map();
+  }
+  async saveOperation(deviceId,toolName,catalogVersion,args,operationId){
+    const data=JSON.stringify({toolName,catalogVersion,args});
+    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+      new TextEncoder().encode(data))),v=>v.toString(16).padStart(2,'0')).join('');
+    const prefix='operation:'+deviceId+':',key=prefix+operationId;
+    const now=Date.now(),record={operation_id:operationId,device_id:deviceId,
+      tool_name:toolName,catalog_version:catalogVersion,hash,status:'submitted',
+      created_at:now,updated_at:now,expires_at:now+OP_RETENTION_MS};
+    let found=null,limitReached=false;
+    await this.ctx.storage.transaction(async tx=>{
+      found=await tx.get(key);
+      if(found)return;
+      const listed=await tx.list({prefix,limit:MAX_DEVICE_OPERATIONS+1});
+      let active=0;
+      for(const [k,v] of listed){
+        if(v?.expires_at<now)await tx.delete(k);
+        else active++;
+      }
+      if(active>=MAX_DEVICE_OPERATIONS){limitReached=true;return;}
+      await tx.put(key,record);
+    });
+    return {record:found,limitReached,hash};
+  }
+  async markOperation(deviceId,operationId,status,result){
+    if(!operationId)return;
+    const key='operation:'+deviceId+':'+operationId;
+    const previous=await this.ctx.storage.get(key);
+    if(previous&&previous.status==='submitted'){
+      // A task receipt is a non-sensitive opaque identifier; never persist
+      // command arguments or raw tool output in the Cloudflare journal.
+      const taskId=result?.structuredContent?.task_id||result?.task_id;
+      await this.ctx.storage.put(key,{...previous,status,updated_at:Date.now(),
+        ...(typeof taskId==='string'&&/^task_[a-f0-9]{64}$/.test(taskId)?{task_id:taskId}:{})});
+    }
+  }
+  async waitForOnline(deviceId, delayMs=6000) {
+    const existing=currentSocket(this.ctx,deviceId);
+    if(existing)return existing;
+    let count=0;
+    for(const waiting of this.onlineWaiters.values())count+=waiting.size;
+    if(count>=32)return null; // bounded DO memory and waiting requests
+    return new Promise(resolve=>{
+      const listeners=this.onlineWaiters.get(deviceId)||new Set();
+      this.onlineWaiters.set(deviceId,listeners);
+      let timer;
+      const done=socket=>{
+        clearTimeout(timer);
+        listeners.delete(done);
+        if(!listeners.size)this.onlineWaiters.delete(deviceId);
+        resolve(socket);
+      };
+      listeners.add(done);
+      timer=setTimeout(()=>done(null),delayMs);
+    });
+  }
+  notifyOnline(deviceId,socket) {
+    for(const done of [...this.onlineWaiters.get(deviceId)||[]])done(socket);
   }
   refreshInvalidCatalog(deviceId) {
     // A Worker upgrade can invalidate a legacy stored snapshot. Never leave an
@@ -277,11 +339,27 @@ export class DeviceHub {
       if(!page)return json(error('CATALOG_CURSOR_EXPIRED','Catalog cursor or page size is invalid'),409);
       return json({ok:true,device_id:input.device_id,online:Boolean(currentSocket(this.ctx,input.device_id)),...page});
     }
+    if(pathname==='/operation-status'){
+      if(req.method!=='POST')return new Response('Method not allowed',{status:405});
+      const input=await req.json().catch(()=>null);
+      if(!ID.test(input?.device_id||'')||!OP_ID.test(input?.operation_id||''))
+        return json(error('BAD_REQUEST','Explicit device_id and operation_id required'),400);
+      const entry=await this.ctx.storage.get('operation:'+input.device_id+':'+input.operation_id);
+      if(!entry)return json(error('OPERATION_NOT_FOUND','No retained operation status'),404);
+      if(entry.expires_at<=Date.now())return json({...error('OPERATION_EXPIRED',
+        'Operation receipt retention expired; do not assume that the tool did not run'),
+        operation_id:input.operation_id},410);
+      return json({ok:true,operation_id:entry.operation_id,device_id:entry.device_id,
+        tool_name:entry.tool_name,status:entry.status,created_at:entry.created_at,
+        updated_at:entry.updated_at,expires_at:entry.expires_at,
+        ...(entry.task_id?{task_id:entry.task_id}:{})});
+    }
     if (pathname === '/invoke') {
       const input = await req.json().catch(() => null);
       if (!input || !ID.test(input.device_id || '') || !ID.test(input.tool_name || '') ||
           !input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments) ||
-          input.catalog_version!==undefined&&!/^[a-f0-9]{64}$/.test(input.catalog_version))
+          input.catalog_version!==undefined&&!/^[a-f0-9]{64}$/.test(input.catalog_version) ||
+          input.operation_id!==undefined&&!OP_ID.test(input.operation_id))
         return json(error('BAD_REQUEST', 'Explicit device_id, tool_name and object arguments required'), 400);
       const stored=await this.ctx.storage.get('catalog:'+input.device_id);
       const catalog=stored===undefined?LEGACY_CATALOG:await validateCatalog(stored);
@@ -295,9 +373,41 @@ export class DeviceHub {
       if(!catalog.tools.some(tool=>tool.name===input.tool_name))
         return json(error('TOOL_DENIED','Tool is not present in the selected device catalog'),403);
 
-      const ws = currentSocket(this.ctx, input.device_id);
-      if (!ws) return json(error('DEVICE_OFFLINE', 'Selected device is not connected'), 503);
       const grantedTool=catalog.tools.find(tool=>tool.name===input.tool_name);
+      const safeReadOnly=!grantedTool.remoteGrant&&
+        grantedTool.annotations?.readOnlyHint===true&&
+        grantedTool.annotations?.destructiveHint===false&&
+        grantedTool.annotations?.openWorldHint===false;
+      let ws=currentSocket(this.ctx,input.device_id);
+      if(!ws&&safeReadOnly){
+        // Only requests not yet delivered to the device may wait for a brief
+        // reconnection. This is never a queue for mutations or uncertain calls.
+        ws=await this.waitForOnline(input.device_id,this.offlineWaitMs??6000);
+        if(ws){
+          const latestStored=await this.ctx.storage.get('catalog:'+input.device_id);
+          const latest=latestStored===undefined?LEGACY_CATALOG:await validateCatalog(latestStored);
+          if(!latest||latest.version!==catalog.version ||
+             currentSocket(this.ctx,input.device_id)!==ws)
+            return json(error('CATALOG_VERSION_STALE',
+              'Device reconnected with a changed catalog; refresh tool list'),409);
+        }
+      }
+      if(!ws)return json(error('DEVICE_OFFLINE','Selected device is not connected'),503);
+      const operationId=input.operation_id||crypto.randomUUID();
+      if(!safeReadOnly){
+        // Durable write-before-send: a reused ID cannot execute again after
+        // Cloudflare, device or MCP transport disconnects.
+        const entry=await this.saveOperation(input.device_id,input.tool_name,
+          catalog.version,input.arguments,operationId);
+        if(entry.limitReached)return json(error('OPERATION_JOURNAL_FULL',
+          'Per-device operation journal is full; retry after retention expires'),429);
+        if(entry.record){
+          const code=entry.record.hash===entry.hash?
+            'OPERATION_ALREADY_SUBMITTED':'OPERATION_ID_CONFLICT';
+          return json({...error(code,'Use get_operation_status; this operation will not be executed again'),
+            operation_id:operationId,status:entry.record.status},409);
+        }
+      }
       const needsLocalConfirmation=['session','per_call','scoped'].includes(grantedTool?.remoteGrant?.mode);
       // No second authorization dialog; runtime timeout only protects execution.
       const ms = Math.max(1000, Math.min(180000, Number(input.timeout_ms) ||
@@ -306,7 +416,9 @@ export class DeviceHub {
         const requestId = crypto.randomUUID();
         const timeout = setTimeout(() => {
           this.pending.delete(requestId);
-          resolve(json(error('EXECUTION_UNKNOWN', 'Device response timed out; do not automatically retry'), 504));
+          if(!safeReadOnly)void this.markOperation(input.device_id,operationId,'unknown');
+          resolve(json({...error('EXECUTION_UNKNOWN',
+            'Device response timed out; do not automatically retry'),operation_id:operationId},504));
         }, ms);
         this.pending.set(requestId, {ws, resolve, timeout, catalog_version:catalogVersion,
           device_id:input.device_id,tool_name:input.tool_name,
@@ -316,12 +428,16 @@ export class DeviceHub {
             grantedTool.annotations?.readOnlyHint===true&&
             grantedTool.annotations?.destructiveHint===false&&
             grantedTool.annotations?.openWorldHint===false,
-          arguments:input.arguments,expires_at:Date.now()+ms,replayed:false});
+          arguments:input.arguments,expires_at:Date.now()+ms,replayed:false,
+          operation_id:!safeReadOnly?operationId:null});
         try { ws.send(JSON.stringify({type: 'invoke', request_id: requestId, tool_name: input.tool_name,
-          catalog_version:catalogVersion, arguments: input.arguments,expires_at:Date.now()+ms})); }
+          catalog_version:catalogVersion, arguments: input.arguments,
+          operation_id:operationId,expires_at:Date.now()+ms})); }
         catch {
           clearTimeout(timeout); this.pending.delete(requestId);
-          resolve(json(error('EXECUTION_UNKNOWN', 'Transport failed; execution state unknown'), 502));
+          if(!safeReadOnly)void this.markOperation(input.device_id,operationId,'unknown');
+          resolve(json({...error('EXECUTION_UNKNOWN',
+            'Transport failed; execution state unknown'),operation_id:operationId},502));
         }
       });
       const first = await invokeOnce(catalog.version);
@@ -365,7 +481,24 @@ export class DeviceHub {
       }
       // Only cloud-issued, device-bound credentials are accepted.
       if (!await verifyDevice(this.ctx,item.device_id,item.token)) { ws.close(1008, 'Unauthorized device'); return; }
-      const catalog=item.catalog===undefined?LEGACY_CATALOG:await validateCatalog(item.catalog);
+      if(item.catalog_version!==undefined &&
+         !/^[a-f0-9]{64}$/.test(item.catalog_version)){
+        ws.close(1008,'Invalid catalog version');return;
+      }
+      const supplied=item.catalog!==undefined;
+      let catalog=supplied?await validateCatalog(item.catalog):null;
+      if(!supplied&&item.catalog_version){
+        const saved=await this.ctx.storage.get('catalog:'+item.device_id);
+        const previous=saved===undefined?LEGACY_CATALOG:await validateCatalog(saved);
+        if(!previous||previous.version!==item.catalog_version){
+          // Authentication has succeeded but registration is not complete:
+          // ask only this socket for the full catalog, without evicting anyone.
+          ws.send(JSON.stringify({type:'catalog_required',
+            catalog_version:previous?.version||''}));
+          return;
+        }
+        catalog=previous;
+      }else if(!supplied)catalog=LEGACY_CATALOG;
       if(!catalog){ws.close(1008,'Invalid tool catalog');return;}
       // A test agent must be authenticated like any other agent, but it must
       // not replace a production socket, update the production catalog/roster,
@@ -403,8 +536,11 @@ export class DeviceHub {
           }
           clearTimeout(pending.timeout);this.pending.delete(requestId);
           failedDuringHandover++;
-          pending.resolve(json(error('DEVICE_DISCONNECTED',
-            'Connection replaced; execution state may be unknown; do not retry mutations'),502));
+          if(pending.operation_id)
+            await this.markOperation(pending.device_id,pending.operation_id,'unknown');
+          pending.resolve(json({...error('DEVICE_DISCONNECTED',
+            'Connection replaced; execution state may be unknown; do not retry mutations'),
+            ...(pending.operation_id?{operation_id:pending.operation_id}:{})},502));
         }
         console.warn('cloud-router-connection-replaced',JSON.stringify({
           device_id:item.device_id,old_connection_id:registered(old)?.connection_id||'unknown',
@@ -421,20 +557,27 @@ export class DeviceHub {
            /[\x00-\x1f]/.test(item.os_version))){
         ws.close(1008,'Invalid OS version');return;
       }
-      await this.ctx.storage.put('catalog:'+item.device_id,catalog);
+      // A normal reconnect with unchanged catalog_version does not rewrite
+      // the stored snapshot; old full-catalog clients stay compatible.
+      const existing=await this.ctx.storage.get('catalog:'+item.device_id);
+      if((supplied || !item.catalog_version) && existing?.version!==catalog.version)
+        await this.ctx.storage.put('catalog:'+item.device_id,catalog);
       const original=await this.ctx.storage.get('device:'+item.device_id);
-      if(original)await this.ctx.storage.put('device:'+item.device_id,{
-        ...original,
-        ...(item.harness_version?{harness_version:item.harness_version}:{}),
-        ...(item.os_version?{os_version:item.os_version}:{}),
-        catalog_version:catalog.version,catalog_count:catalog.tools.length
-      });
+      if(original){
+        const updated={...original,
+          ...(item.harness_version?{harness_version:item.harness_version}:{}),
+          ...(item.os_version?{os_version:item.os_version}:{}),
+          catalog_version:catalog.version,catalog_count:catalog.tools.length};
+        if(JSON.stringify(updated)!==JSON.stringify(original))
+          await this.ctx.storage.put('device:'+item.device_id,updated);
+      }
       const connectionId=crypto.randomUUID();
       ws.serializeAttachment({authenticated:true,device_id:item.device_id,
         name:item.name,platform:item.platform,catalog_version:catalog.version,
         connection_id:connectionId});
       ws.send(JSON.stringify({type:'registered',device_id:item.device_id,catalog_version:catalog.version,
         connection_id:connectionId}));
+      this.notifyOnline(item.device_id,ws);
       for(const [requestId,pending] of migrated){
         try{ws.send(JSON.stringify({type:'invoke',request_id:requestId,
           tool_name:pending.tool_name,catalog_version:pending.catalog_version,
@@ -444,6 +587,11 @@ export class DeviceHub {
           pending.resolve(json(error('EXECUTION_UNKNOWN','Connection handover failed'),502));
         }
       }
+      return;
+    }
+    if(item?.type==='heartbeat'){
+      if(typeof item.nonce==='string'&&item.nonce.length<=80)
+        ws.send(JSON.stringify({type:'heartbeat_ack',nonce:item.nonce}));
       return;
     }
     if(item?.type==='catalog_update'){
@@ -472,13 +620,17 @@ export class DeviceHub {
     if (!pending || pending.ws !== ws) return;
     this.pending.delete(item.request_id);
     clearTimeout(pending.timeout);
+    if(pending.operation_id)
+      await this.markOperation(pending.device_id,pending.operation_id,
+        item.error?'failed':'succeeded',item.result);
     if (item.error === 'DEVICE_CATALOG_UNAVAILABLE') {
       console.warn('cloud-router-device-catalog-unavailable', JSON.stringify({
         device_id:pending.device_id,tool_name:pending.tool_name,
         request_catalog_version:pending.catalog_version}));
       pending.resolve(json({...error('DEVICE_CATALOG_UNAVAILABLE',
         'The device cannot obtain a valid local tool catalog'),
-        worker_catalog_version:pending.catalog_version},503));
+        worker_catalog_version:pending.catalog_version,
+        ...(pending.operation_id?{operation_id:pending.operation_id}:{})},503));
       return;
     }
     if (item.error === 'CATALOG_VERSION_STALE') {
@@ -488,17 +640,20 @@ export class DeviceHub {
       console.warn('cloud-router-catalog-mismatch', JSON.stringify({
         device_id: pending.device_id, tool_name: pending.tool_name, ...versions}));
       pending.resolve(json({...error('CATALOG_VERSION_STALE', 'Device catalog changed before execution'),
-        ...versions}, 409));
+        ...versions,...(pending.operation_id?{operation_id:pending.operation_id}:{})},409));
       return;
     }
-    pending.resolve(json(item.error ? error('DEVICE_TOOL_ERROR', String(item.error).slice(0,1000))
-      : {ok: true, result: item.result}));
+    pending.resolve(json(item.error ? {...error('DEVICE_TOOL_ERROR',String(item.error).slice(0,1000)),
+      ...(pending.operation_id?{operation_id:pending.operation_id}:{})}
+      : {ok:true,result:item.result,...(pending.operation_id?{operation_id:pending.operation_id}:{})}));
   }
   failPending(ws, code) {
     for (const [id, pending] of this.pending) {
       if (pending.ws !== ws) continue;
       clearTimeout(pending.timeout); this.pending.delete(id);
-      pending.resolve(json(error(code, 'Connection dropped; operation may have executed'), 502));
+      if(pending.operation_id)void this.markOperation(pending.device_id,pending.operation_id,'unknown');
+      pending.resolve(json({...error(code,'Connection dropped; operation may have executed'),
+        ...(pending.operation_id?{operation_id:pending.operation_id}:{})},502));
     }
   }
   webSocketClose(ws,code,reason) {
@@ -535,12 +690,19 @@ const tools = [
       properties:{device_id:{type:'string',description:'Device ID returned by list_devices'},
         cursor:{type:'string',description:'Opaque next_cursor from the previous page'},
         limit:{type:'integer',minimum:1,maximum:64,default:32}}}},
+  {name:'get_operation_status',
+    description:'Query a stored operation receipt for an explicitly selected device without re-executing it. An unknown result must not be retried with a new ID.',
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+    inputSchema:{type:'object',additionalProperties:false,required:['device_id','operation_id'],
+      properties:{device_id:{type:'string'},operation_id:{type:'string',pattern:OP_ID.source}}}},
   {name: 'call_device_tool', description: 'Invoke a tool present in the selected device current remote-safe catalog. Never silently substitute a different device.',
     annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:true},
     inputSchema: {type: 'object', additionalProperties: false, required: ['device_id','tool_name','catalog_version','arguments'],
       properties: {device_id: {type: 'string', description: 'Device ID returned by list_devices'},
         tool_name: {type: 'string', description: 'Tool name from list_device_tools'},
         catalog_version: {type:'string',pattern:'^[a-f0-9]{64}$',description:'Catalog version returned by list_device_tools; refresh the catalog if stale'},
+        operation_id:{type:'string',pattern:OP_ID.source,
+          description:'Optional stable UUID for one operation. Reuse it to query results; reusing it NEVER reruns a mutation.'},
         arguments: {type: 'object', additionalProperties: true}}}}
 ];
 // This dispatcher is never a public Worker entrypoint. OAuthResourceServer must authenticate it.
@@ -598,6 +760,19 @@ export const authorizedWorker = {
       const result = inspectClientContext(message.params?._meta);
       return json(rpc(id, {...textResult(result), structuredContent: result}));
     }
+    if(name==='get_operation_status'){
+      if(!args||typeof args!=='object'||Array.isArray(args)||
+         Object.keys(args).some(k=>!['device_id','operation_id'].includes(k))||
+         !ID.test(args.device_id||'')||!OP_ID.test(args.operation_id||''))
+        return json(rpc(id,{isError:true,...textResult(error('BAD_REQUEST',
+          'Explicit device_id and UUID operation_id required'))}));
+      const res=await getHub(env).fetch(new Request('https://hub.internal/operation-status',{
+        method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(args)
+      }));
+      const answer=await res.json();
+      return json(rpc(id,{...textResult(answer),structuredContent:answer,
+        ...(!answer.ok?{isError:true}:{})}));
+    }
     if (!['call_device_tool','get_tool_result_page','get_tool_result_file'].includes(name))
       return json(rpcError(id, -32602, 'Unknown tool'));
     const routed=name==='call_device_tool'?args:{device_id:args?.device_id,tool_name:name,
@@ -605,6 +780,7 @@ export const authorizedWorker = {
         ? {result_id:args?.result_id,...(args?.offset===undefined?{}:{offset:args.offset}),...(args?.length===undefined?{}:{length:args.length})}
         : {result_id:args?.result_id,file_index:args?.file_index}};
     if (!routed || !ID.test(routed.device_id || '') || !ID.test(routed.tool_name || '') ||
+        (routed.operation_id!==undefined&&!OP_ID.test(routed.operation_id)) ||
         !routed.arguments || typeof routed.arguments !== 'object' || Array.isArray(routed.arguments) ||
         name==='call_device_tool'&&!/^[a-f0-9]{64}$/.test(routed.catalog_version||''))
       return json(rpc(id, {isError: true, ...textResult(error('BAD_REQUEST', 'Explicit device_id/tool_name/catalog_version/arguments required'))}));
@@ -613,6 +789,9 @@ export const authorizedWorker = {
       body: JSON.stringify(routed),
       headers: {'content-type': 'application/json'}}));
     const answer = await upstream.json();
-    return json(rpc(id, {...textResult(answer.ok ? answer.result : answer), ...(!answer.ok ? {isError: true} : {})}));
+    return json(rpc(id, {...textResult(answer.ok ? answer.result : answer),
+      ...(answer.ok&&answer.operation_id?{structuredContent:{result:answer.result,
+        operation_id:answer.operation_id}}:{}),
+      ...(!answer.ok?{isError:true}:{})}));
   }
 };

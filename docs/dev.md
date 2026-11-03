@@ -1,3 +1,23 @@
+## 2026-11-03 Cloudflare MCP 目录增量校验、断线等待与 operation_id（rocket）
+
+- 继续使用唯一 UnifyHarness → Cloudflare Worker / DEVICE_HUB → 各本机 WebSocket Agent；不增加 Secure MCP Tunnel 备用路径。
+- **目录同步减少写入**：新版 Agent 在 WebSocket `register` 仅发送 `catalog_version`（SHA-256），Worker 检查 Durable Object 已保存目录：同版本直接注册、不重新上传和写入；版本不符或无有效目录时回 `catalog_required`，Agent 再发送完整目录。旧版始终提交完整目录的 Agent 仍兼容；工具定义有变化时仍发送 `catalog_update`。测试/诊断连接不会更新正式设备目录，也不会抢占正式 Agent。
+- **断线只读缓冲**：`/invoke` 在目标离线且工具显式标记为只读、非破坏、非开放世界、无额外远程 Grant 时最多等 6 秒重连；Durable Object 最多积累 32 个等待项，连接恢复后复核目录版本与工具定义，安全转发一次；逾期 `DEVICE_OFFLINE`，目录变化 `CATALOG_VERSION_STALE`。执行命令、写文件、Computer Use 等不排队，离线立即失败；已发出但结果不明的调用不自动重发。
+- **执行类去重**：`call_device_tool` 支持可选 UUID 格式 `operation_id`，缺失时 Worker 自动生成。Worker 在发送非只读调用之前，以事务持久写入操作 ID、工具名、目录版本、参数摘要 SHA-256、状态/时间戳，不在 Cloudflare 存储原始命令参数、文件内容或结果输出。相同 ID 再次调用返回 `OPERATION_ALREADY_SUBMITTED`，参数变化返回 `OPERATION_ID_CONFLICT`；**绝不自动重复执行**。
+- 新增云端 `get_operation_status(device_id,operation_id)` MCP 工具，查询 `submitted/succeeded/failed/unknown`；设备响应若包含符合格式的持久 `task_id` 会记录并返回它，可接着调用原本地 `get_task_result`；执行结果不明不能视作已失败或安全重试。记录保留最多 24 小时，单设备最多 256 条，超限拒绝新执行类请求而不越界堆积。模型调用方若要防止跨调用重复执行，必须在重试时**复用同一个 operation_id**；对无 ID 的全新调用不能保证语义去重。
+- 修复回归含：版本匹配免全量上传、失配请求快照、旧客户端兼容、测试连接隔离、只读等待恢复及超时清理、执行类离线不排队、重复和参数冲突去重、断线未知状态、任务 ID 恢复且不存原始参数。完整 Node 测试 **754 PASS、19 SKIP、0 FAIL**；Worker 双 Wrangler dry-run 通过；Windows 隔离 Electron GUI smoke（zh-CN/en/ja）通过，但未进行新版 Windows 正式 EXE 实机复验。安全 Tunnel 独立本地工具生命周期的上一轮未提交修改保持原样。
+- Cloudflare Worker **已部署**，最终版本 ID：`27413290-b99e-415d-8e23-9daeb9faa6cd`。用统一 UnifyHarness 实测 rocket/MOON/macOS 均在线；rocket 目录 53 项、`get_harness_status` 返回 Ready，仍运行旧桌面构建 `1bef3fb`。新 `get_operation_status` 需当前 ChatGPT 插件工具目录刷新后再验证；桌面 Agent 需退出旧 EXE 后在 rocket 固定目录 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked` 构建和断线实机复验。当前修改未提交推送。
+
+## 2026-11-02 独立工具生命周期与 Cloudflare MCP 持续在线整改（rocket）
+
+- **根因一已定位：** `RuntimeManager.disconnect()` 在停止 Secure MCP Tunnel 时无条件调用 `gateway.stop()`，而 `runtime.gateway` 就是 `McpManager`。其 `stop()` 令 `running=false`；`visibleTools()` 不再返回 Harness 本机服务工具，`CloudRouterService.catalog()` 仅剩结果分页两项工具。因此不是 ChatGPT 或 Cloudflare 的发现限制，是本机错误的工具生命周期耦合。
+- 修正：新增 `RuntimeManager.independentLocalTools` 显式模式，主程序设置该模式并在初始化时独立启动本机 `McpManager.start(settings.public())`。安全 Tunnel 单独断开不再停止本机工具服务；App 完全退出通过 `gateway.close()` 清理；安装更新前显式停止工具，并在安装器启动失败时恢复。用户修改已授权目录或项目上下文设置时，重新初始化本机工具，防止旧目录权限残留。
+- **根因二代码缺口已定位：** Cloudflare Agent 原已有 WebSocket close/error 重连及至多 30 秒退避，但当代理、TLS、注册过程卡住，或网络半断开且没有 close/error 事件时，缺乏主动健康监测，无法保证持续重连；真实网络底层掉线原因尚无直接日志证据。
+- 修正：Cloudflare Agent 注册超时 20s、正常会话每 20s 发送带唯一 nonce 的心跳、未在 55s 内收到匹配应答主动断开重连；使用原有退避（2s 起、上限 30s），为超时、重连和恢复记录事件，隔离过期 socket 回调；人工暂停/断开关闭定时器不再自动重连。Worker 新增仅对已认证 Agent 的 `heartbeat` 消息答复 `heartbeat_ack`，不改设备目录/鉴权/权限，也不重放写操作；CloudRouterService 正确发布 `reconnecting` 与 `ready` phase。
+- 回归覆盖：安全 Tunnel 断开后完整目录不变且云端仍可调用本地工具、App 退出清理、半开注册超时重连、丢失心跳应答重连、Worker 心跳确认不影响目录与正式连接。专项测试 60 PASS/1 SKIP/0 FAIL，完整 Node 测试 748 PASS/19 SKIP/0 FAIL，Cloudflare Worker 双 Wrangler dry-run 通过，隔离 Windows Electron GUI 冒烟通过。
+- Cloudflare Worker 已部署版本 `e81c9efc-7687-4e21-a75d-d948066203f6`；部署后统一插件实测 rocket 正式连接在线、工具目录 53 项，`get_harness_status` 为 Ready。实机“安全 Tunnel 断线后工具不减少”和“Cloudflare 新版客户端自动重连”**仍待本地桌面新版打包运行并复验**。未覆盖正在运行的旧 EXE；构建固定 `D:\\proj\\github\\ChatToHarness\\dist\\win-unpacked`，未创建 worktree。
+- 代码尚未提交/推送（用户此次未要求 Git 提交）。
+
 ## 2026-11-02 连接配置内部并排双标签与独立本机工具授权
 
 - 左侧将原“连接配置”明确改为“安全通道配置”，保留 Tunnel ID、Runtime API Key、代理入口、凭据更换与清除。

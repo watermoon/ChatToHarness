@@ -62,7 +62,173 @@ test('internal MCP dispatcher exposes only router tools (external auth is mandat
   const init = await f.mcp('initialize', {});
   assert.equal(init.body.result.serverInfo.name, 'chattoharness-cloud-router');
   assert.deepEqual((await f.mcp('tools/list', {})).body.result.tools.map(x => x.name),
-    ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','list_device_tools','call_device_tool']);
+    ['create_pairing_code','list_devices','inspect_client_context','get_tool_result_page','get_tool_result_file','list_device_tools','get_operation_status','call_device_tool']);
+});
+test('reconnect uses catalog version without rewriting durable catalog, and requests mismatched snapshot',async()=>{
+ const f=await fixture(),firstCatalog=catalog(['read_inventory']);
+ const first=await f.register('rocket','Rocket',null,{catalog:firstCatalog});
+ assert.equal(first.messages[0].type,'registered');
+ const original=await f.hub.ctx.storage.get('catalog:rocket');
+ const second=await f.register('rocket','Rocket',null,{catalog_version:firstCatalog.version});
+ assert.equal(second.messages[0].type,'registered');
+ assert.equal(first.readyState,3);
+ assert.equal(await f.hub.ctx.storage.get('catalog:rocket'),original,'reuse snapshot object');
+ const third=await f.register('rocket','Rocket',null,{catalog_version:'b'.repeat(64)});
+ assert.deepEqual(third.messages[0],{type:'catalog_required',catalog_version:firstCatalog.version});
+ assert.equal(second.readyState,1,'failed hash must not replace production');
+ assert.equal(third.deserializeAttachment(),undefined);
+ const updated=catalog(['read_inventory','second_tool']);
+ await f.hub.webSocketMessage(third,JSON.stringify({type:'register',device_id:'rocket',
+   name:'Rocket',platform:'darwin',token:f.tokens.get('rocket'),catalog:updated}));
+ assert.equal(third.messages.at(-1).catalog_version,updated.version);
+ assert.equal(second.readyState,3);
+ const stored=await f.hub.ctx.storage.get('catalog:rocket');
+ assert.equal(stored.version,updated.version);
+});
+test('offline read-only invocation waits briefly for reconnect but mutations fail immediately',async()=>{
+ const f=await fixture(),c=catalog(['read_inventory']);
+ const first=await f.register('rocket','Rocket',null,{catalog:c});
+ f.hub.offlineWaitMs=80;
+ first.close();
+ const pending=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   device_id:'rocket',tool_name:'read_inventory',catalog_version:c.version,arguments:{}
+ }});
+ for(let n=0;n<80&&!f.hub.onlineWaiters.get('rocket')?.size;n++)
+   await new Promise(r=>setTimeout(r,2));
+ assert.equal(f.hub.onlineWaiters.get('rocket')?.size,1);
+ const second=await f.register('rocket','Rocket',null,{catalog_version:c.version});
+ for(let n=0;n<50&&!second.messages.some(x=>x.type==='invoke');n++)
+   await new Promise(r=>setTimeout(r,2));
+ const call=second.messages.find(x=>x.type==='invoke');
+ assert.ok(call,'offline request sent once after authentication');
+ await f.hub.webSocketMessage(second,JSON.stringify({type:'result',request_id:call.request_id,result:{ok:1}}));
+ assert.deepEqual(JSON.parse((await pending).body.result.content[0].text),{ok:1});
+ second.close();
+ const timeout=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   device_id:'rocket',tool_name:'read_inventory',catalog_version:c.version,arguments:{}
+ }});
+ assert.equal(JSON.parse(timeout.body.result.content[0].text).code,'DEVICE_OFFLINE');
+ assert.equal(f.hub.onlineWaiters.size,0,'offline waiter fully released');
+});
+test('queued read-only request rejects changed catalog after device returns online',async()=>{
+ const f=await fixture(),oldCatalog=catalog(['read_inventory']);
+ const first=await f.register('rocket','Rocket',null,{catalog:oldCatalog});
+ first.close();
+ const call=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   device_id:'rocket',tool_name:'read_inventory',catalog_version:oldCatalog.version,arguments:{}
+ }});
+ for(let i=0;i<60&&!f.hub.onlineWaiters.get('rocket')?.size;i++)
+   await new Promise(r=>setTimeout(r,2));
+ const newCatalog=catalog(['read_inventory','new_tool']);
+ const replacement=await f.register('rocket','Rocket',null,{catalog:newCatalog});
+ const result=await call;
+ assert.equal(JSON.parse(result.body.result.content[0].text).code,'CATALOG_VERSION_STALE');
+ assert.equal(replacement.messages.filter(x=>x.type==='invoke').length,0);
+});
+test('operation ID is durable, deduplicated and queryable without recording command arguments',async()=>{
+ const f=await fixture();
+ const c=catalog(['write_file']);
+ c.tools[0].annotations={readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:false};
+ c.tools[0].remoteGrant={mode:'persistent'};
+ c.version=createHash('sha256').update(JSON.stringify({schema_version:1,tools:c.tools})).digest('hex');
+ const ws=await f.register('rocket','Rocket',null,{catalog:c});
+ const operationId='123e4567-e89b-42d3-a456-426614174001';
+ const request={device_id:'rocket',tool_name:'write_file',catalog_version:c.version,
+   operation_id:operationId,arguments:{path:'a.txt',content:'secret'}};
+ const first=f.mcp('tools/call',{name:'call_device_tool',arguments:request});
+ for(let i=0;i<70&&!ws.messages.some(x=>x.type==='invoke');i++)
+   await new Promise(r=>setTimeout(r,2));
+ const invoke=ws.messages.find(x=>x.type==='invoke');
+ assert.ok(invoke);
+ assert.equal(invoke.operation_id,operationId);
+ const duplicate=await f.mcp('tools/call',{name:'call_device_tool',arguments:request});
+ const rejected=JSON.parse(duplicate.body.result.content[0].text);
+ assert.equal(rejected.code,'OPERATION_ALREADY_SUBMITTED');
+ assert.equal(rejected.operation_id,operationId);
+ assert.equal(ws.messages.filter(x=>x.type==='invoke').length,1);
+ const mismatch=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   ...request,arguments:{path:'b.txt',content:'different'}}});
+ assert.equal(JSON.parse(mismatch.body.result.content[0].text).code,'OPERATION_ID_CONFLICT');
+ const receipt=await f.mcp('tools/call',{name:'get_operation_status',
+   arguments:{device_id:'rocket',operation_id:operationId}});
+ assert.equal(receipt.body.result.structuredContent.status,'submitted');
+ const stored=await f.hub.ctx.storage.get('operation:rocket:'+operationId);
+ assert.equal(stored.args,undefined,'durable journal stores only digest and status');
+ assert.equal(stored.hash.length,64);
+ await f.hub.webSocketMessage(ws,JSON.stringify({type:'result',request_id:invoke.request_id,
+   result:{success:true}}));
+ const finished=await first;
+ assert.equal(finished.body.result.structuredContent.operation_id,operationId);
+ assert.deepEqual(JSON.parse(finished.body.result.content[0].text),{success:true});
+ const status=await f.mcp('tools/call',{name:'get_operation_status',
+   arguments:{device_id:'rocket',operation_id:operationId}});
+ assert.equal(status.body.result.structuredContent.status,'succeeded');
+ assert.equal(ws.messages.filter(x=>x.type==='invoke').length,1);
+});
+test('long-running task receipt retains only an opaque task ID',async()=>{
+ const f=await fixture(),c=catalog(['start_task']);
+ c.tools[0].annotations={readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:false};
+ c.tools[0].remoteGrant={mode:'scoped'};
+ c.version=createHash('sha256').update(JSON.stringify({schema_version:1,tools:c.tools})).digest('hex');
+ const ws=await f.register('rocket','Rocket',null,{catalog:c});
+ const operationId='123e4567-e89b-42d3-a456-426614174004';
+ const call=f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   device_id:'rocket',tool_name:'start_task',catalog_version:c.version,
+   operation_id:operationId,arguments:{command:'diagnostic'}}});
+ for(let i=0;i<60&&!ws.messages.some(x=>x.type==='invoke');i++)
+   await new Promise(r=>setTimeout(r,2));
+ const message=ws.messages.find(x=>x.type==='invoke');
+ assert.ok(message);
+ const taskId='task_'+('a'.repeat(64));
+ await f.hub.webSocketMessage(ws,JSON.stringify({type:'result',request_id:message.request_id,
+   result:{structuredContent:{task_id:taskId},content:[{type:'text',text:'some output'}]}}));
+ await call;
+ const receipt=await f.mcp('tools/call',{name:'get_operation_status',
+   arguments:{device_id:'rocket',operation_id:operationId}});
+ assert.equal(receipt.body.result.structuredContent.task_id,taskId);
+ const persisted=await f.hub.ctx.storage.get('operation:rocket:'+operationId);
+ assert.equal(persisted.args,undefined);
+ assert.equal(persisted.content,undefined);
+});
+test('mutation is never queued while offline, and uncertain operation cannot be replayed',async()=>{
+ const f=await fixture(),c=catalog(['write_file']);
+ c.tools[0].annotations={readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:false};
+ c.tools[0].remoteGrant={mode:'persistent'};
+ c.version=createHash('sha256').update(JSON.stringify({schema_version:1,tools:c.tools})).digest('hex');
+ const ws=await f.register('rocket','Rocket',null,{catalog:c});
+ const operationId='123e4567-e89b-42d3-a456-426614174002';
+ const request={device_id:'rocket',tool_name:'write_file',catalog_version:c.version,
+   operation_id:operationId,arguments:{path:'note.txt'}};
+ const call=f.mcp('tools/call',{name:'call_device_tool',arguments:request});
+ for(let i=0;i<70&&!ws.messages.some(x=>x.type==='invoke');i++)
+   await new Promise(r=>setTimeout(r,2));
+ assert.ok(ws.messages.some(x=>x.type==='invoke'));
+ ws.close();
+ await f.hub.webSocketClose(ws,1006,'network-lost');
+ const response=await call;
+ assert.equal(JSON.parse(response.body.result.content[0].text).code,'EXECUTION_UNKNOWN');
+ const status=await f.mcp('tools/call',{name:'get_operation_status',
+   arguments:{device_id:'rocket',operation_id:operationId}});
+ assert.equal(status.body.result.structuredContent.status,'unknown');
+ const offline=await f.mcp('tools/call',{name:'call_device_tool',arguments:{
+   ...request,operation_id:'123e4567-e89b-42d3-a456-426614174003'}});
+ assert.equal(JSON.parse(offline.body.result.content[0].text).code,'DEVICE_OFFLINE');
+ assert.equal(f.hub.onlineWaiters.size,0,'write operation must not enter read-only waiting queue');
+ const replacement=await f.register('rocket','Rocket',null,{catalog_version:c.version});
+ const again=await f.mcp('tools/call',{name:'call_device_tool',arguments:request});
+ assert.equal(JSON.parse(again.body.result.content[0].text).code,'OPERATION_ALREADY_SUBMITTED');
+ assert.equal(replacement.messages.filter(x=>x.type==='invoke').length,0);
+});
+test('Cloudflare heartbeat is acknowledged without affecting production socket or catalog',async()=>{
+  const f=await fixture();
+  const socket=await f.register('rocket');
+  const before=(await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:20}}))
+    .body.result.structuredContent.catalog_version;
+  await f.hub.webSocketMessage(socket,JSON.stringify({type:'heartbeat',nonce:'hb-1'}));
+  assert.deepEqual(socket.messages.at(-1),{type:'heartbeat_ack',nonce:'hb-1'});
+  const after=(await f.mcp('tools/call',{name:'list_device_tools',arguments:{device_id:'rocket',limit:20}}))
+    .body.result.structuredContent.catalog_version;
+  assert.equal(after,before);
 });
 test('test-mode agents coexist with production device identity without takeover or catalog writes',async()=>{
   const f=await fixture(),live=await f.register('rocket');

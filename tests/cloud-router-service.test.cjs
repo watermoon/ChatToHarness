@@ -30,6 +30,41 @@ function fixture() {
   const service=new CloudRouterService({manager,identity:{id:'cu-00000000-0000-4000-8000-000000000001',name:'Mac',platform:'darwin'},WebSocketImpl:Socket});
   return {service,calls,manager,definitions};
 }
+test('Cloudflare retains its full local tool catalog after Secure Tunnel disconnect',async()=>{
+  const {McpManager}=require('../app/mcp-manager.cjs');
+  const {RuntimeManager}=require('../app/runtime.cjs');
+  const os=require('node:os');
+  const native=[safeTool('get_harness_status'),safeTool('read_inventory'),safeTool('start_task',{
+    readOnlyHint:false,destructiveHint:true,openWorldHint:false})];
+  let calls=0;
+  const manager=new McpManager({
+    settings:{list:()=>[],getAllowAllTools:()=>false},
+    services:{configure(){},tools:()=>native,has:name=>native.some(tool=>tool.name===name),
+      async call(){calls++;return {ok:true};},
+      stopComputerUse(){},dispose(){}}
+  });
+  manager.broker={async start(){},async stop(){},async close(){},results:{
+    tools:()=>[safeTool('get_tool_result_page'),safeTool('get_tool_result_file')]
+  }};
+  await manager.start({directories:[]});
+  const cloud=new CloudRouterService({manager,identity:{
+    id:'cu-00000000-0000-4000-8000-000000000099',name:'Rocket',platform:'win32'
+  },WebSocketImpl:Socket});
+  const before=cloud.catalog();
+  assert.equal(before.tools.length,5,'native tools and paging tools must be present');
+  const runtime=new RuntimeManager({home:os.tmpdir(),
+    gateway:manager,independentLocalTools:true,
+    paths:{node:process.execPath,tunnel:process.execPath}});
+  await runtime.disconnect();
+  assert.equal(manager.running,true,'tunnel shutdown cannot stop local MCP manager');
+  const after=cloud.catalog();
+  assert.equal(after.version,before.version,'Cloudflare catalog remains stable after Tunnel stops');
+  assert.deepEqual(after.tools,before.tools);
+  await cloud.execute('read_inventory',{});
+  assert.equal(calls,1,'local tool remains callable via Cloudflare after Tunnel stops');
+  await runtime.close();
+  assert.equal(manager.running,false,'desktop shutdown still stops local MCP manager');
+});
 test('cloud router is disabled by default and never replaces the Tunnel',()=>{
   const {service}=fixture();
   assert.deepEqual(service.status().connected,false);
@@ -53,7 +88,7 @@ test('CloudRouterService propagates test mode and reports it explicitly',()=>{
  socket.open();
  assert.equal(socket.sent[0].test_mode,true);
  socket.message({type:'registered',device_id:'moon',test_mode:true,
-   catalog_version:socket.sent[0].catalog.version});
+   catalog_version:socket.sent[0].catalog_version});
  assert.equal(service.status().connected,true);
  service.stop();
 });
@@ -67,9 +102,9 @@ test('the device registers its stable local identity and calls existing manager 
   assert.equal(socket.sent[0].harness_version,require('../package.json').version);
   assert.equal(typeof socket.sent[0].os_version,'string');
   assert.ok(socket.sent[0].os_version.length>0);
-  socket.message({type:'registered',device_id:socket.sent[0].device_id,catalog_version:socket.sent[0].catalog.version});
+  socket.message({type:'registered',device_id:socket.sent[0].device_id,catalog_version:socket.sent[0].catalog_version});
   assert.equal(service.status().connected,true);
-  socket.message({type:'invoke',request_id:'1',tool_name:'get_harness_status',catalog_version:socket.sent[0].catalog.version,arguments:{}});
+  socket.message({type:'invoke',request_id:'1',tool_name:'get_harness_status',catalog_version:socket.sent[0].catalog_version,arguments:{}});
   await new Promise(r=>setImmediate(r));
   assert.deepEqual(calls,[['get_harness_status',{}]]);
   assert.equal(socket.sent.at(-1).result.content[0].text,'ready');
@@ -81,7 +116,9 @@ test('device publishes, refreshes and locally enforces its read-only tool catalo
   Socket.instances.length=0;
   service.start({enabled:true,url:'wss://router.example/agent',token:TOKEN});
   const socket=Socket.instances.at(-1);socket.open();
-  const initial=socket.sent[0].catalog;
+  const initial=service.catalog();
+  assert.equal(socket.sent[0].catalog_version,initial.version);
+  assert.equal(Object.hasOwn(socket.sent[0],'catalog'),false);
   const names=initial.tools.map(tool=>tool.name);
   assert.ok(names.includes('read_inventory'));
   assert.ok(names.includes('get_harness_status'));

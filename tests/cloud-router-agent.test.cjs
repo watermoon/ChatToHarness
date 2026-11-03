@@ -18,6 +18,39 @@ function options(extra = {}) {
     platform: 'win32', token: TOKEN, execute: async () => ({ok: true}),
     WebSocketImpl: FakeWS, allowedTools: ['get_harness_status'], reconnectMs: 5, ...extra};
 }
+test('stalled Cloudflare registration retries without a WebSocket close event',async()=>{
+  FakeWS.instances.length=0;
+  const events=[];
+  const agent=connectAgent(options({registerTimeoutMs:12,reconnectMs:4,
+    onConnectionEvent:e=>events.push(e)}));
+  const first=FakeWS.instances.at(-1);first.opened();
+  // The socket stays open but the server never acknowledges registration.
+  for(let i=0;i<50&&FakeWS.instances.length<2;i++)
+    await new Promise(resolve=>setTimeout(resolve,2));
+  assert.ok(events.some(e=>e.event==='timeout'));
+  assert.ok(FakeWS.instances.length>=2,'agent must create a new socket');
+  const next=FakeWS.instances.at(-1);next.opened();
+  next.message({type:'registered',device_id:'moon'});
+  assert.equal(agent.connected,true);
+  agent.close();
+});
+test('missed Cloudflare heartbeats trigger a fresh connection',async()=>{
+  FakeWS.instances.length=0;
+  const events=[];
+  const agent=connectAgent(options({heartbeatMs:9,heartbeatTimeoutMs:11,
+    registerTimeoutMs:90,reconnectMs:4,onConnectionEvent:e=>events.push(e)}));
+  const first=FakeWS.instances.at(-1);first.opened();
+  first.message({type:'registered',device_id:'moon'});
+  assert.equal(agent.connected,true);
+  await new Promise(resolve=>setTimeout(resolve,78));
+  assert.ok(first.sent.some(x=>x.type==='heartbeat'),'keepalive sent to Worker');
+  assert.ok(events.some(e=>e.reason==='heartbeat_ack_missing'),'missed ack detected');
+  assert.ok(FakeWS.instances.length>=2,'new socket attempted');
+  const next=FakeWS.instances.at(-1);next.opened();
+  next.message({type:'registered',device_id:'moon'});
+  assert.equal(agent.connected,true);
+  agent.close();
+});
 test('agent rejects untrusted and insecure connection configuration', () => {
   assert.throws(() => connectAgent(options({url: 'ws://localhost/agent'})), /INVALID_AGENT_CONFIGURATION/);
   assert.throws(() => connectAgent(options({token: '123'})), /INVALID_AGENT_CONFIGURATION/);
@@ -69,7 +102,10 @@ test('agent publishes catalog, syncs changes and rejects stale catalog versions'
   }}));
   const ws=FakeWS.instances.at(-1);ws.opened();
   assert.equal(ws.sent[0].type,'register');
-  assert.equal(ws.sent[0].catalog.version,catalog.version);
+  assert.equal(ws.sent[0].catalog_version,catalog.version);
+  assert.equal(Object.hasOwn(ws.sent[0],'catalog'),false,'normal reconnect sends hash only');
+  ws.message({type:'catalog_required'});
+  assert.equal(ws.sent[1].catalog.version,catalog.version,'send full catalog only upon request');
   ws.message({type:'registered',device_id:'moon',catalog_version:catalog.version});
   ws.message({type:'invoke',request_id:'catalog-1',tool_name:'read_inventory',
     catalog_version:catalog.version,arguments:{scope:'usb'}});
