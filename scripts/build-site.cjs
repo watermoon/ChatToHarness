@@ -3,9 +3,11 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {buildHelp}=require('./help-site.cjs');
 const root=path.resolve(__dirname,'..');
-const repository='DJ-Huang/ChatToHarness';
+const repository=process.env.CTH_SITE_REPOSITORY||'DJ-Huang/ChatToHarness';
+if(!/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository))throw new Error('Invalid website release repository.');
 const repoURL='https://github.com/'+repository;
-const baseURL='https://dj-huang.github.io/ChatToHarness/';
+const [owner,repositoryName]=repository.split('/');
+const baseURL=`https://${owner.toLowerCase()}.github.io/${repositoryName}/`;
 const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 function releaseInfo(releases){
   const stable=releases.filter(item=>!item.draft&&!item.prerelease&&/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(item.tag_name));

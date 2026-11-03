@@ -2,6 +2,12 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {releaseInfo,build}=require('../scripts/build-site.cjs');
 const {version,requireDraft,assets}=require('../scripts/release.cjs');
+test('site release assets follow the explicitly selected GitHub repository',()=>{
+  const {execFileSync}=require('node:child_process');
+  const source="const {releaseInfo}=require('./scripts/build-site.cjs');const n='ChatToHarness-0.8.2-windows-x64-setup.exe';const a={name:n,size:12,browser_download_url:'https://github.com/watermoon/ChatToHarness/releases/download/v0.8.2/'+n};console.log(Boolean(releaseInfo([{tag_name:'v0.8.2',draft:false,prerelease:false,assets:[a]}]).windows));";
+  const output=execFileSync(process.execPath,['-e',source],{cwd:path.resolve(__dirname,'..'),encoding:'utf8',env:{...process.env,CTH_SITE_REPOSITORY:'watermoon/ChatToHarness'}});
+  assert.equal(output.trim(),'true');
+});
 function release(tag='v0.3.0',extra={}){return {tag_name:tag,draft:false,prerelease:false,assets:[`ChatToHarness-${tag.slice(1)}-windows-x64-setup.exe`,`ChatToHarness-${tag.slice(1)}-macos-arm64.dmg`,'SHA256SUMS.txt'].map(name=>({name,size:12345,browser_download_url:`https://github.com/DJ-Huang/ChatToHarness/releases/download/${tag}/${name}`})),...extra};}
 test('site ignores draft and prerelease assets and handles an unpublished first version',()=>{assert.equal(releaseInfo([]).windows,null);assert.equal(releaseInfo([release('v9.0.0',{draft:true}),release('v8.0.0',{prerelease:true}),release()]).version,'0.3.0');});
 test('site chooses newest stable semver and never invents unavailable platform files',()=>{assert.equal(releaseInfo([release('v0.9.0'),release('v0.10.0')]).version,'0.10.0');const info=releaseInfo([release('v0.3.0',{assets:[]})]);assert.equal(info.macos,null);assert.equal(info.checksum,null);});

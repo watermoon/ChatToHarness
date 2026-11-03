@@ -64,6 +64,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CTH_RELEASE_TAG: ${{ inputs.release_tag || '' }}
+          CTH_SITE_REPOSITORY: ${{ github.repository }}
         run: node scripts/build-site.cjs
       - uses: actions/upload-pages-artifact@v4
         with:
