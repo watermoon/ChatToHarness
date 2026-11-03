@@ -45,8 +45,20 @@ function main() {
     const installer = path.join(outputRoot, `ChatToHarness-${version}-windows-x64-setup.exe`);
     const directory = path.join(temporary, '应用 installed');
     // NSIS requires /D last and unquoted, even when the path contains spaces.
-    run(installer, ['/S', `/D=${directory}`], { windowsVerbatimArguments: true });
     const executable = path.join(directory, 'ChatToHarness.exe');
+    // Native extraction of an unsigned, large installer can exceed the
+    // previous 4-minute CI limit; bound the operation and report evidence.
+    const start=Date.now();
+    try {
+      run(installer, ['/S', `/D=${directory}`], {
+        windowsVerbatimArguments:true,timeout:600000
+      });
+    } catch(error) {
+      const entries=fs.existsSync(directory)?fs.readdirSync(directory).slice(0,15):[];
+      throw new Error(`NSIS install failed after ${Math.round((Date.now()-start)/1000)}s; `+
+        `installer_bytes=${fs.statSync(installer).size}; executable_exists=${fs.existsSync(executable)}; `+
+        `directory_entries=${JSON.stringify(entries)}; ${error.message}`);
+    }
     if (!fs.existsSync(executable)) throw new Error('NSIS installation did not produce the requested executable');
     report.installer = true;
     smoke(executable);

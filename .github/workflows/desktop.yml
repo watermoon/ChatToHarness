@@ -73,10 +73,10 @@ jobs:
         run: node scripts/mcp-smoke.cjs
       - name: Shipped runtime and loopback control plane
         run: node scripts/tunnel-smoke.cjs
-      - name: Actual packaged window and synthetic channel
-        run: node scripts/ui-smoke.cjs
       - name: Installer acceptance and retained user data
         run: node scripts/installer-smoke.cjs
+      - name: Actual packaged window and synthetic channel
+        run: node scripts/ui-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ runner.os }}
