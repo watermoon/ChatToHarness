@@ -97,4 +97,5 @@ jobs:
       - name: Verify production versions and downloads in all languages
         env:
           EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+          CTH_SITE_REPOSITORY: ${{ github.repository }}
         run: node scripts/verify-site.cjs "$EXPECTED_VERSION"

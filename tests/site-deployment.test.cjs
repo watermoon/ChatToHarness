@@ -3,6 +3,12 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {build}=require('../scripts/build-site.cjs');
 const {expectedTag,prepareDeployment}=require('../scripts/site-deployment.cjs');
 const {validatePage,verifySite}=require('../scripts/verify-site.cjs');
+test('production verifier accepts the selected fork release URLs',()=>{
+  const {execFileSync}=require('node:child_process');
+  const script="const {validatePage}=require('./scripts/verify-site.cjs');const prefix='https://github.com/watermoon/ChatToHarness/releases/download/v0.8.2/';const names=['ChatToHarness-0.8.2-windows-x64-setup.exe','ChatToHarness-0.8.2-macos-arm64.dmg','SHA256SUMS.txt'];const html='<p>Version: 0.8.2</p><span>v0.8.2 </span><span>v0.8.2 </span>'+names.map(n=>'<a href=\"'+prefix+n+'\">download</a>').join('');validatePage(html,'0.8.2');console.log('verified');";
+  const result=execFileSync(process.execPath,['-e',script],{cwd:path.resolve(__dirname,'..'),encoding:'utf8',env:{...process.env,CTH_SITE_REPOSITORY:'watermoon/ChatToHarness'}});
+  assert.equal(result.trim(),'verified');
+});
 function release(version){return {tag_name:'v'+version,draft:false,prerelease:false,assets:[`ChatToHarness-${version}-windows-x64-setup.exe`,`ChatToHarness-${version}-macos-arm64.dmg`,'SHA256SUMS.txt'].map(name=>({name,size:12345,browser_download_url:`https://github.com/DJ-Huang/ChatToHarness/releases/download/v${version}/${name}`}))};}
 const old=release('0.3.1'),current=release('0.4.0');
 

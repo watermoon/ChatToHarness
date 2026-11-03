@@ -1,6 +1,9 @@
 'use strict';
-const baseURL='https://dj-huang.github.io/ChatToHarness/';
-const repositoryURL='https://github.com/DJ-Huang/ChatToHarness';
+const repository=process.env.CTH_SITE_REPOSITORY||'DJ-Huang/ChatToHarness';
+if(!/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository))throw new Error('Invalid website release repository.');
+const [owner,repositoryName]=repository.split('/');
+const baseURL=`https://${owner.toLowerCase()}.github.io/${repositoryName}/`;
+const repositoryURL=`https://github.com/${repository}`;
 const routes=['','en/','zh-CN/','ja/'];
 function validatePage(html,version){
   if(!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))throw new Error('Expected a stable version.');
