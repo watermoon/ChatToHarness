@@ -505,13 +505,18 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(file,'http://127.0.0.1:'+server
   // Exercise update IPC without a real network request or installer. Checking
   // and preferences must leave both credentials and active tools unchanged.
   await instance.evaluate(({net,app})=>{
+    const sources={
+      'https://api.github.com/repos/DJ-Huang/ChatToHarness/releases/latest':'https://github.com/DJ-Huang/ChatToHarness/releases/',
+      'https://api.github.com/repos/watermoon/ChatToHarness/releases/latest':'https://github.com/watermoon/ChatToHarness/releases/'
+    };
     net.fetch=async url=>{
-      if(url!=='https://api.github.com/repos/DJ-Huang/ChatToHarness/releases/latest')throw new Error('Unexpected update request');
+      const releaseRoot=sources[url];
+      if(!releaseRoot)throw new Error('Unexpected update request');
       // The mocked published release must stay stable even when smoke testing
       // a local prerelease installer. Use an older stable fixture version.
       const current=app.getVersion();
       const tag='v'+(current.includes('-')?'0.0.0':current);
-      return new Response(JSON.stringify({tag_name:tag,draft:false,prerelease:false,published_at:'2026-10-17T00:00:00Z',html_url:'https://github.com/DJ-Huang/ChatToHarness/releases/tag/'+tag,assets:[]}),{status:200});
+      return new Response(JSON.stringify({tag_name:tag,draft:false,prerelease:false,published_at:'2026-10-17T00:00:00Z',html_url:releaseRoot+'tag/'+tag,assets:[]}),{status:200});
     };
   });
   await tab(page,'help');

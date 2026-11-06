@@ -7,8 +7,12 @@ const { EventEmitter } = require('node:events');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const API = 'https://api.github.com/repos/DJ-Huang/ChatToHarness/releases/latest';
-const RELEASE_ROOT = 'https://github.com/DJ-Huang/ChatToHarness/releases/';
+const RELEASE_SOURCES = Object.freeze([
+  Object.freeze({ repository: 'DJ-Huang/ChatToHarness', api: 'https://api.github.com/repos/DJ-Huang/ChatToHarness/releases/latest', releaseRoot: 'https://github.com/DJ-Huang/ChatToHarness/releases/' }),
+  Object.freeze({ repository: 'watermoon/ChatToHarness', api: 'https://api.github.com/repos/watermoon/ChatToHarness/releases/latest', releaseRoot: 'https://github.com/watermoon/ChatToHarness/releases/' }),
+]);
+// Retain the original exported API for compatibility with existing callers.
+const API = RELEASE_SOURCES[0].api;
 const CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const STARTUP_DELAY = 10000;
 const MAX_INSTALLER_BYTES = 8 * 1024 ** 3;
@@ -41,8 +45,13 @@ function newer(latest, current) {
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
   return parsed.prerelease;
 }
-function assetUrl(asset, tag) {
-  const expected = `${RELEASE_ROOT}download/${encodeURIComponent(tag)}/${encodeURIComponent(asset.name)}`;
+function compareStable(left, right) {
+  const a = version(left), b = version(right);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+}
+function assetUrl(asset, tag, source) {
+  const expected = `${source.releaseRoot}download/${encodeURIComponent(tag)}/${encodeURIComponent(asset.name)}`;
   if (asset.browser_download_url !== expected) throw failure('release');
   return expected;
 }
@@ -118,36 +127,61 @@ class Updater extends EventEmitter {
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]);
     this.update({ phase: 'checking', latest: '', received: 0, total: 0, error: '', releaseUrl: '' });
     try {
-      const response = await this.response(API, signal, { metadata: true });
-      if (!response) { this.update({ phase: 'unavailable', checkedAt: this.now() }); return this.status(); }
-      let release;
-      try { release = JSON.parse(await boundedText(response, 1024 * 1024)); }
-      catch (error) { if (signal.aborted) throw error; throw failure('release'); }
-      if (!release || release.draft !== false || release.prerelease !== false || !release.published_at || !Array.isArray(release.assets)) throw failure('release');
-      version(release.tag_name);
-      const releaseUrl = `${RELEASE_ROOT}tag/${encodeURIComponent(release.tag_name)}`;
-      if (release.html_url !== releaseUrl) throw failure('release');
-      this.update({ latest: release.tag_name.replace(/^v/, ''), checkedAt: this.now(), releaseUrl });
-      if (!newer(release.tag_name, this.current)) { this.update({ phase: 'current' }); return this.status(); }
+      const attempts = await Promise.all(RELEASE_SOURCES.map(async (source, priority) => {
+        try {
+          const response = await this.response(source.api, signal, { metadata: true });
+          if (!response) return { source, priority, release: null, error: null };
+          let release;
+          try { release = JSON.parse(await boundedText(response, 1024 * 1024)); }
+          catch (error) { if (signal.aborted) throw error; throw failure('release'); }
+          if (!release || release.draft !== false || release.prerelease !== false || !release.published_at || !Array.isArray(release.assets)) throw failure('release');
+          version(release.tag_name);
+          const releaseUrl = `${source.releaseRoot}tag/${encodeURIComponent(release.tag_name)}`;
+          if (release.html_url !== releaseUrl) throw failure('release');
+          return { source, priority, release, releaseUrl, error: null };
+        } catch (error) { return { source, priority, release: null, error }; }
+      }));
+      const releases = attempts.filter(item => item.release).sort((a, b) =>
+        compareStable(b.release.tag_name, a.release.tag_name) || a.priority - b.priority);
+      const errors = attempts.filter(item => item.error).map(item => item.error);
+      if (!releases.length) {
+        if (errors.length) throw errors[0];
+        this.update({ phase: 'unavailable', checkedAt: this.now() }); return this.status();
+      }
+      const newest = releases[0];
+      this.update({ latest: newest.release.tag_name.replace(/^v/, ''), checkedAt: this.now(), releaseUrl: newest.releaseUrl });
+      const newerReleases = releases.filter(item => newer(item.release.tag_name, this.current));
+      if (!newerReleases.length) {
+        if (errors.length) throw errors[0];
+        this.update({ phase: 'current' }); return this.status();
+      }
       const suffix = this.platform === 'win32' && this.arch === 'x64' ? 'windows-x64-setup.exe'
         : this.platform === 'darwin' && this.arch === 'arm64' ? 'macos-arm64.dmg' : '';
       if (!suffix) throw failure('platform');
-      const name = `ChatToHarness-${this.state.latest}-${suffix}`;
-      const asset = release.assets.find(item => item.name === name);
-      if (!asset || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_INSTALLER_BYTES) throw failure('asset');
-      const url = assetUrl(asset, release.tag_name);
-      let digest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || '')?.[1];
-      if (!digest) {
-        const sums = release.assets.find(item => item.name === 'SHA256SUMS.txt');
-        if (!sums || !Number.isSafeInteger(sums.size) || sums.size <= 0 || sums.size > 65536) throw failure('checksum');
-        const content = await boundedText(await this.response(assetUrl(sums, release.tag_name), signal), 65536);
-        const matches = content.split(/\r?\n/).map(line => /^([a-f0-9]{64})\s+\*?(.+)$/i.exec(line)).filter(match => match?.[2] === name);
-        if (matches.length !== 1) throw failure('checksum');
-        digest = matches[0][1];
+      const candidateErrors = [];
+      for (const candidate of newerReleases) {
+        try {
+          const latest = candidate.release.tag_name.replace(/^v/, '');
+          const name = `ChatToHarness-${latest}-${suffix}`;
+          const asset = candidate.release.assets.find(item => item.name === name);
+          if (!asset || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_INSTALLER_BYTES) throw failure('asset');
+          const url = assetUrl(asset, candidate.release.tag_name, candidate.source);
+          let digest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || '')?.[1];
+          if (!digest) {
+            const sums = candidate.release.assets.find(item => item.name === 'SHA256SUMS.txt');
+            if (!sums || !Number.isSafeInteger(sums.size) || sums.size <= 0 || sums.size > 65536) throw failure('checksum');
+            const content = await boundedText(await this.response(assetUrl(sums, candidate.release.tag_name, candidate.source), signal), 65536);
+            const matches = content.split(/\r?\n/).map(line => /^([a-f0-9]{64})\s+\*?(.+)$/i.exec(line)).filter(match => match?.[2] === name);
+            if (matches.length !== 1) throw failure('checksum');
+            digest = matches[0][1];
+          }
+          if (this.closed) return this.status();
+          this.asset = { name, url, size: asset.size, digest: digest.toLowerCase() };
+          this.update({ latest, releaseUrl: candidate.releaseUrl, phase: this.packaged ? 'available' : 'development', total: asset.size });
+          return this.status();
+        } catch (error) { candidateErrors.push(error); }
       }
-      if (this.closed) return this.status();
-      this.asset = { name, url, size: asset.size, digest: digest.toLowerCase() };
-      this.update({ phase: this.packaged ? 'available' : 'development', total: asset.size });
+      throw candidateErrors[0] || errors[0] || failure('asset');
     } catch (error) { this.fail(error); }
     finally { if (this.controller === controller) this.controller = null;this.update({checkedAt:this.now()}); }
     return this.status();
@@ -231,4 +265,4 @@ class Updater extends EventEmitter {
     // are removed by transfer's cancellation path.
   }
 }
-module.exports = { Updater, newer, API, CHECK_INTERVAL, STARTUP_DELAY, ERRORS };
+module.exports = { Updater, newer, API, RELEASE_SOURCES, CHECK_INTERVAL, STARTUP_DELAY, ERRORS };

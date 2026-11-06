@@ -5,23 +5,29 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { Updater, newer, API, STARTUP_DELAY, CHECK_INTERVAL, ERRORS } = require('../app/updater.cjs');
+const { Updater, newer, API, RELEASE_SOURCES, STARTUP_DELAY, CHECK_INTERVAL, ERRORS } = require('../app/updater.cjs');
 const { Preferences } = require('../app/preferences.cjs');
+
+function publishedRelease(source, version, bytes, digest, suffix = 'macos-arm64.dmg') {
+  const tag = `v${version}`, name = `ChatToHarness-${version}-${suffix}`;
+  const url = file => `${source.releaseRoot}download/${tag}/${file}`;
+  return { tag_name: tag, html_url: `${source.releaseRoot}tag/${tag}`,
+    published_at: '2026-10-17T00:00:00Z', draft: false, prerelease: false,
+    assets: [{ name, size: bytes.length, digest: `sha256:${digest}`, browser_download_url: url(name) }] };
+}
 
 function fixture(t, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cth-update-'));
   const bytes = Buffer.from('verified installer fixture');
   const digest = crypto.createHash('sha256').update(bytes).digest('hex');
-  const tag = 'v0.3.2', name = 'ChatToHarness-0.3.2-macos-arm64.dmg';
-  const url = file => `https://github.com/DJ-Huang/ChatToHarness/releases/download/${tag}/${file}`;
-  const release = { tag_name: tag, html_url: `https://github.com/DJ-Huang/ChatToHarness/releases/tag/${tag}`,
-    published_at: '2026-10-17T00:00:00Z', draft: false, prerelease: false,
-    assets: [{ name, size: bytes.length, digest: `sha256:${digest}`, browser_download_url: url(name) }] };
+  const release = publishedRelease(RELEASE_SOURCES[0], '0.3.2', bytes, digest);
+  const url = file => `${RELEASE_SOURCES[0].releaseRoot}download/${release.tag_name}/${file}`;
   const calls = [];
   const updater = new Updater({ current: '0.3.1', platform: 'darwin', arch: 'arm64', directory,
     fetcher: async (target, init) => {
       calls.push({ target, init });
-      return target === API ? Response.json(release) : new Response(bytes);
+      return target === API ? Response.json(release)
+        : target === RELEASE_SOURCES[1].api ? new Response('', { status: 404 }) : new Response(bytes);
     }, ...options });
   t.after(() => { updater.dispose(); fs.rmSync(directory, { recursive: true, force: true }); });
   return { updater, directory, bytes, digest, release, calls, url };
@@ -38,8 +44,8 @@ test('stable numeric versions, platform selection, and development mode', async 
   assert.throws(() => newer('v0.7.0-beta', '0.7.0-beta'));
   const f = fixture(t);
   assert.equal((await f.updater.check()).phase, 'available');
-  assert.equal(f.calls.length, 1, 'a check never downloads the installer');
-  assert.equal(f.calls[0].init.credentials, 'omit');
+  assert.deepEqual(f.calls.map(call => call.target), RELEASE_SOURCES.map(source => source.api), 'a check queries both metadata sources without downloading an installer');
+  assert.ok(f.calls.every(call => call.init.credentials === 'omit'));
   const dev = fixture(t, { packaged: false });
   assert.equal((await dev.updater.check()).phase, 'development');
   await assert.rejects(dev.updater.download());
@@ -47,6 +53,51 @@ test('stable numeric versions, platform selection, and development mode', async 
   windows.release.assets[0].name = 'ChatToHarness-0.3.2-windows-x64-setup.exe';
   windows.release.assets[0].browser_download_url = windows.url(windows.release.assets[0].name);
   assert.equal((await windows.updater.check()).phase, 'available');
+});
+
+test('current repository is appended and its newer validated installer is selected', async t => {
+  for (const [platform, arch, suffix] of [['darwin', 'arm64', 'macos-arm64.dmg'], ['win32', 'x64', 'windows-x64-setup.exe']]) {
+    const f = fixture(t, { current: '0.8.0', platform, arch });
+    const official = publishedRelease(RELEASE_SOURCES[0], '0.8.1', f.bytes, f.digest, suffix);
+    const current = publishedRelease(RELEASE_SOURCES[1], '0.8.2', f.bytes, f.digest, suffix);
+    const calls = [];
+    f.updater.fetcher = async (target, init) => {
+      calls.push({ target, init });
+      if (target === RELEASE_SOURCES[0].api) return Response.json(official);
+      if (target === RELEASE_SOURCES[1].api) return Response.json(current);
+      return new Response(f.bytes);
+    };
+    const status = await f.updater.check();
+    assert.equal(status.phase, 'available');
+    assert.equal(status.latest, '0.8.2');
+    assert.equal(status.releaseUrl, `${RELEASE_SOURCES[1].releaseRoot}tag/v0.8.2`);
+    assert.equal(f.updater.asset.url, `${RELEASE_SOURCES[1].releaseRoot}download/v0.8.2/ChatToHarness-0.8.2-${suffix}`);
+    assert.deepEqual(calls.map(call => call.target), RELEASE_SOURCES.map(source => source.api));
+    assert.equal(await f.updater.download(), true);
+  }
+});
+
+test('original repository keeps priority when both sources publish the same version', async t => {
+  const f = fixture(t, { current: '0.8.0' });
+  const releases = RELEASE_SOURCES.map(source => publishedRelease(source, '0.8.2', f.bytes, f.digest));
+  f.updater.fetcher = async target => {
+    const index = RELEASE_SOURCES.findIndex(source => source.api === target);
+    return index >= 0 ? Response.json(releases[index]) : new Response(f.bytes);
+  };
+  const status = await f.updater.check();
+  assert.equal(status.releaseUrl, `${RELEASE_SOURCES[0].releaseRoot}tag/v0.8.2`);
+  assert.equal(f.updater.asset.url, `${RELEASE_SOURCES[0].releaseRoot}download/v0.8.2/ChatToHarness-0.8.2-macos-arm64.dmg`);
+});
+
+test('each appended source enforces its own release asset origin', async t => {
+  const f = fixture(t, { current: '0.8.0' });
+  const official = publishedRelease(RELEASE_SOURCES[0], '0.8.0', f.bytes, f.digest);
+  const current = publishedRelease(RELEASE_SOURCES[1], '0.8.2', f.bytes, f.digest);
+  current.assets[0].browser_download_url = `${RELEASE_SOURCES[0].releaseRoot}download/v0.8.2/${current.assets[0].name}`;
+  f.updater.fetcher = async target => target === RELEASE_SOURCES[0].api ? Response.json(official) : Response.json(current);
+  const status = await f.updater.check();
+  assert.equal(status.phase, 'error');
+  assert.equal(status.canDownload, false);
 });
 
 test('drafts, prereleases, wrong asset origins and absent installers do not enable updates', async t => {
@@ -66,9 +117,11 @@ test('SHA256SUMS fallback is bounded and must identify the exact installer', asy
   delete f.release.assets[0].digest;
   f.release.assets.push({ name: 'SHA256SUMS.txt', size: 120, browser_download_url: f.url('SHA256SUMS.txt') });
   f.updater.fetcher = async target => target === API ? Response.json(f.release)
-    : new Response(`${f.digest}  ${f.release.assets[0].name}\n`);
+    : target === RELEASE_SOURCES[1].api ? new Response('', { status: 404 })
+      : new Response(`${f.digest}  ${f.release.assets[0].name}\n`);
   assert.equal((await f.updater.check()).phase, 'available');
-  f.updater.fetcher = async target => target === API ? Response.json(f.release) : new Response('x'.repeat(65537));
+  f.updater.fetcher = async target => target === API ? Response.json(f.release)
+    : target === RELEASE_SOURCES[1].api ? new Response('', { status: 404 }) : new Response('x'.repeat(65537));
   assert.equal((await f.updater.check()).phase, 'error');
   assert.equal(f.updater.status().canDownload, false);
 });
@@ -115,7 +168,7 @@ test('automatic checks are delayed, deduplicated, repeat daily and can be disabl
   const first = f.updater.check(), second = f.updater.check();
   assert.equal(first, second);
   await first;
-  assert.equal(f.calls.length, 1); assert.equal(timer.delay, CHECK_INTERVAL);
+  assert.equal(f.calls.length, RELEASE_SOURCES.length); assert.equal(timer.delay, CHECK_INTERVAL);
   f.updater.setAutomatic(false); assert.equal(timer, null);
   assert.equal(f.updater.status().automatic, false);
   f.updater.setAutomatic(true); assert.ok(timer);

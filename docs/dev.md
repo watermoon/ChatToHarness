@@ -1,3 +1,11 @@
+## 2026-11-06 v0.8.3：追加当前仓库应用更新来源与发布准备
+
+- 保留原有 `DJ-Huang/ChatToHarness` Release 更新来源，追加固定的 `watermoon/ChatToHarness` 来源；每次检查同时读取两边公开稳定版，按语义版本选择最高且可完整验证的安装包，同版本继续优先原来源，不以新来源覆盖旧来源。
+- 每个来源分别固定 GitHub API、Release 页面和下载根地址；跨仓库页面或安装包 URL 会被拒绝。安装包大小、平台、SHA-256 以及 `SHA256SUMS.txt` 回退校验保持不变；只有用户点击后才下载和安装。
+- `package.json` 与锁文件已同步准备 `0.8.3`，并新增三语发布说明。已发布的 0.8.2 只检查原来源，不能自动发现仅位于当前 fork 的 0.8.3；用户需从当前仓库 Release 或 Pages 手动安装一次，后续版本才会同时使用两个来源。
+- 自动化：更新器专项 **13/13 PASS**；完整串行测试 **767 PASS / 11 SKIP / 0 FAIL（共 778）**。默认并行完整测试两次各出现一个不同的夹具波动（开发进程 JSON 输出截断、合成 ASAR 缓存校验），对应文件分别复跑 **15/15** 与 **1/1 PASS**；远端正式双平台 CI 仍是发布标签前的必要门禁。
+- macOS arm64 本机发布准备：macOS 14.0 双架构 Computer Use helper 构建通过；0.8.3 应用打包与三语隔离 GUI smoke 通过；生成的 354 MB DMG 通过 `hdiutil verify`，SHA-256 为 `6bf4d54024b96b861cf84a46f3c543494a7dc5654051cd127ee7eb2f6683e795`；安装验收确认版本 0.8.3、隔离启动及用户数据保留。该本机 DMG 不是最终 GitHub Release 资产，Windows 安装包与正式双平台产物仍由标签工作流构建和核验。
+
 ## 2026-11-03 Cloudflare MCP 目录增量校验、断线等待与 operation_id（rocket）
 
 - 继续使用唯一 UnifyHarness → Cloudflare Worker / DEVICE_HUB → 各本机 WebSocket Agent；不增加 Secure MCP Tunnel 备用路径。

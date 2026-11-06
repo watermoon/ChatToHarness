@@ -21,6 +21,8 @@ Save unfinished settings and files and inspect running work, especially independ
 5. Reopen, verify the running version and settings, and reconnect. In your client, refresh the tool catalog or reconnect the plugin to load the updated tool descriptions and parameters, then run a [read-only check](first-task.md) and inspect the actual tool result.
 6. Set automatic checks as desired. By default they start about ten seconds after launch, then every 24 hours, and notify without installing.
 
+Each check keeps the original `DJ-Huang/ChatToHarness` Release source and also checks `watermoon/ChatToHarness`. The app offers the highest validated stable installer; if both sources publish the same version, the original source remains preferred.
+
 ![Check for updates and install a new version](../images/help/en/updates.png)
 
 1 Check manually; 2 Automatic-check preference. Interface demonstration using the current repository UI and isolated sample data; not evidence of a live tunnel or tool call.
